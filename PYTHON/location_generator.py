@@ -45,6 +45,7 @@ buildings = {
     "hbll3": ((40.248593,-111.649754),(40.248999,-111.648739)),
 }
 
+# bridges from interiors to exteriors. Make CERTAIN these fall on the exact lines of the exteriors they touch
 doors = {
     "eb": [(40.246253,-111.648444), (40.246474,-111.648222)],
     "clyde": [(40.247062,-111.648447), (40.246739,-111.648447), (40.247315,-111.648222), 
@@ -53,17 +54,18 @@ doors = {
              (40.246830,-111.649448)],
     "kennedy": [(40.247321,-111.649395), (40.247573,-111.649504), (40.247850,-111.649400), 
                 (40.247850,-111.649094), (40.247580,-111.649274)],
-    "wilk": [(40.248062,-111.648414), (40.248023,-111.647393), (40.248833,-111.647775), 
+    "wilk": [(40.248062,-111.648414), (40.248023,-111.647389), (40.248833,-111.647775), 
              (40.248707,-111.648289)],
+    "wilk parking sidewalk points": [(40.247830,-111.647389), (40.247391,-111.647523)],
     "library": [(40.248073,-111.649249), (40.249227,-111.649385), (40.249227,-111.649116)]
 }
 
+# points of interest that aren't doors
 poi = {
     "south street": [(40.245824,-111.649303), (40.245877,-111.649180), 
                      (40.245992,-111.648810), (40.246008,-111.648579), (40.245957,-111.647407)],
     "central strip": [(40.247373,-111.648593), (40.247971,-111.648609), (40.247971,-111.648838), 
                       (40.247971,-111.649251), (40.247971,-111.649999)],
-    "wilk parking sidewalk points": [(40.247830,-111.647389), (40.247391,-111.647523)],
 }
 
 """Generates a rectangular space with doors in the corners."""
@@ -81,8 +83,8 @@ def simple_space(y, x, mode):
 
     return array
 
-"""Alters the incoming array by adding a blocked zone between the specified points."""
-def building(array, p1, p2):
+"""Alters the incoming map by adding a blocked zone between the specified points."""
+def building(map, p1, p2):
     y1, x1 = p1
     y2, x2 = p2
 
@@ -94,38 +96,38 @@ def building(array, p1, p2):
     w = maxy - miny
     h = maxx - minx
     # a building, bottom-left is (miny, minx)
-    r, c = np.indices(array.shape)
+    r, c = np.indices(map.shape)
     # only put down a building where there is not already one
-    mask1 = (np.abs(r - (w/2 + miny)) < w/2) & (np.abs(c - (h/2 + minx)) < h/2) & (array == material["open"])
-    array[mask1] = material["blocked"]
+    mask1 = (np.abs(r - (w/2 + miny)) < w/2) & (np.abs(c - (h/2 + minx)) < h/2) & (map == material["open"])
+    map[mask1] = material["blocked"]
 
     # fill the interiors of buildings with walkable spaces
     mask2 = (np.abs(r - (w/2 + miny)) < w/2 - 1) & (np.abs(c - (h/2 + minx)) < h/2 - 1)
-    array[mask2] = material["interior"]
+    map[mask2] = material["interior"]
 
-    return array
+    return map
 
-"""Returns the total number of paved spaces in the array, multiplied by the cost per paved square"""
-def cost(array, units):
-    return np.count_nonzero(array == material["paved"])*units    
+"""Returns the total number of paved spaces in the map, multiplied by the cost per paved square"""
+def cost(map, units):
+    return np.count_nonzero(map == material["paved"])*units    
 
-"""Prints the array out, for small ones"""
-def print_array(array):
-    print(np.flip(array, 0))
+"""Prints the map out in plain text, for the small ones"""
+def print_map(map):
+    print(np.flip(map, 0))
 
-"""Prints the grid nice and pretty"""
-def plot_grid(grid):
+"""Plots the map nice and pretty with colors and such"""
+def plot_map(map):
     cmap = ListedColormap([color_map[i] for i in sorted(color_map.keys())])
 
-    plt.figure(figsize=(6,6))
-    plt.imshow(grid, cmap=cmap, origin="lower", vmin=0, vmax=len(color_map)-1)
+    plt.figure()
+    plt.imshow(map, cmap=cmap, origin="lower", vmin=0, vmax=len(color_map)-1)
     plt.xticks([])
     plt.yticks([])
     plt.gca().set_aspect('equal')
     plt.show()
 
 """Builds a map of campus between two coordinates"""
-def campus(res, p1, p2):
+def campus(resolution, p1, p2):
     y1, x1 = p1
     y2, x2 = p2
 
@@ -139,16 +141,16 @@ def campus(res, p1, p2):
 
     # convert from lat/long to scaled, integer coordinates
     mind = np.minimum(w, h)
-    scale = int(res/mind)
+    scale = int(resolution/mind)
     w = int(w*scale)
     h = int(h*scale)
 
-    array = np.zeros((w, h), dtype=np.uint8)
+    map = np.zeros((w, h), dtype=np.uint8)
 
     for c1, c2 in buildings.values():
         point1 = (int(scale*(c1[0] - miny)), int(scale*(c1[1] - minx)))
         point2 = (int(scale*(c2[0] - miny)), int(scale*(c2[1] - minx)))
-        array = building(array, point1, point2)
+        map = building(map, point1, point2)
 
     for door_list in doors.values():
         for d in door_list:
@@ -156,8 +158,8 @@ def campus(res, p1, p2):
             x = int(scale*(d[1] - minx))
 
             # don't plot a door if it's index is negative
-            if 0 <= y < array.shape[0] and 0 <= x < array.shape[1]:
-                array[y, x] = material["door"]
+            if 0 <= y < map.shape[0] and 0 <= x < map.shape[1]:
+                map[y, x] = material["door"]
 
     for poi_list in poi.values():
         for p in poi_list:
@@ -165,10 +167,15 @@ def campus(res, p1, p2):
             x = int(scale*(p[1] - minx))
 
             # don't plot a door if it's index is negative
-            if 0 <= y < array.shape[0] and 0 <= x < array.shape[1]:
-                array[y, x] = material["poi"]
+            if 0 <= y < map.shape[0] and 0 <= x < map.shape[1]:
+                map[y, x] = material["poi"]
 
-    return array
+    return map
+
+"""Returns a list of points that must be visitable (doors and pois)"""
+def visitables(map):
+    spots = np.argwhere(np.isin(map, [material["door"], material["poi"]]))
+    return spots
 
 if __name__ == "__main__":
     # basic = simple_space(6, 6, "corners")
@@ -179,5 +186,6 @@ if __name__ == "__main__":
     # basic = simple_space(5, 5, "corridor")
     # plot_grid(basic)
 
-    campus_plot = campus(72, (40.245462,-111.649794), (40.248344,-111.646590))
-    plot_grid(campus_plot)
+    campus_plot = campus(64, (40.245751,-111.649794), (40.248344,-111.646590))
+    plot_map(campus_plot)
+    print(visitables(campus_plot).shape)
