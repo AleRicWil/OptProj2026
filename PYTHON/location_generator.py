@@ -69,8 +69,9 @@ poi = {
     "little study zone": [(40.247759,-111.648712)],
 }
 
-"""Generates a rectangular space with doors in the corners."""
+
 def simple_space(y, x, mode):
+    """Generates a rectangular space with doors in the corners."""
     array = np.zeros((y, x), dtype=np.uint8)
     # doors in the corners
     if (mode == "corners"):
@@ -84,8 +85,9 @@ def simple_space(y, x, mode):
 
     return array
 
-"""Alters the incoming map by adding a blocked zone between the specified points."""
+
 def building(map, p1, p2):
+    """Alters the incoming map by adding a blocked zone between the specified points."""
     y1, x1 = p1
     y2, x2 = p2
 
@@ -108,16 +110,19 @@ def building(map, p1, p2):
 
     return map
 
-"""Returns the total number of paved spaces in the map, multiplied by the cost per paved square"""
+
 def cost(map, units):
+    """Returns the total number of paved spaces in the map, multiplied by the cost per paved square"""
     return np.count_nonzero(map == material["paved"])*units    
 
-"""Prints the map out in plain text, for the small ones"""
+
 def print_map(map):
+    """Prints the map out in plain text, for the small ones"""
     print(np.flip(map, 0))
 
-"""Plots the map nice and pretty with colors and such"""
+
 def plot_map(map):
+    """Plots the map nice and pretty with colors and such"""
     cmap = ListedColormap([color_map[i] for i in sorted(color_map.keys())])
 
     plt.figure()
@@ -127,8 +132,9 @@ def plot_map(map):
     plt.gca().set_aspect('equal')
     plt.show()
 
-"""Builds a map of campus between two coordinates"""
+
 def campus(resolution, p1, p2):
+    """Builds a map of campus between two coordinates"""
     y1, x1 = p1
     y2, x2 = p2
 
@@ -173,8 +179,9 @@ def campus(resolution, p1, p2):
 
     return map
 
-"""Returns a list of points that must be visitable (doors and pois)"""
+
 def visitables(map):
+    """Returns a list of points that must be visitable (doors and pois)"""
     spots = np.argwhere(np.isin(map, [material["door"], material["poi"]]))
     return spots
 
