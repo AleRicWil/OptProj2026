@@ -196,4 +196,4 @@ if __name__ == "__main__":
 
     campus_plot = campus(64, (40.245751,-111.649794), (40.248344,-111.646590))
     plot_map(campus_plot)
-    print(visitables(campus_plot).shape)
+    # print(visitables(campus_plot).shape)
