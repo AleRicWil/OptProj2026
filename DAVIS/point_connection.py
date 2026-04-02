@@ -112,7 +112,6 @@ def dijkstra_path_builder(map):
         if map[r, c] == material["open"]:
             map[r, c] = material["paved"]
             
-
 def steiner_path_builder(map):
     """Near-Steiner path builder"""
     pois = [tuple(p) for p in visitables(map)]
@@ -181,7 +180,6 @@ def steiner_path_builder(map):
             
             remaining_pois.remove(target_poi)
             connected_network.add(target_poi)
-
 
 if __name__=="__main__":
     # simple = simple_space(10, 10, "corridor")
