@@ -2,7 +2,6 @@ from location_generator import *
 import math as m
 import heapq
 
-
 material = {
     "open": 0,
     "paved": 1,
@@ -49,6 +48,7 @@ def bresenham_line(x0, y0, x1, y1):
 
 
 def connect_local_pois(grid, max_distance):
+    '''straight-line neighborhood-based finder. uses bresenham'''
     visited_pairs = set()
     pois = visitables(grid)
 
@@ -82,6 +82,7 @@ def connect_local_pois(grid, max_distance):
     return grid
 
 def connect_nearest_pois(grid, k):
+    '''straight-line k-nearest-neighbors finder. uses bresenham'''
     visited_pairs = set()
     pois = visitables(grid)
 
@@ -130,6 +131,7 @@ def connect_nearest_pois(grid, k):
 
 
 def astar(grid, start, goal):
+    '''the astar pathfinding algorithm'''
     rows, cols = len(grid), len(grid[0])
 
     def heuristic(a, b):
@@ -190,6 +192,7 @@ def astar(grid, start, goal):
 
 
 def connect_nearest_pois_astar(grid, k):
+    '''takes pois, finds nearest neighbors, and astars a path to them'''
     visited_pairs = set()
     pois = visitables(grid)
 
@@ -227,24 +230,42 @@ def connect_nearest_pois_astar(grid, k):
 
     return grid
 
+def build_candidate_graph(grid, k):
+    '''a list of cells, potentially for paving'''
+    pois = visitables(grid)
+    edges = []  # (i, j, cost, path)
 
+    for i, poi_a in enumerate(pois):
+        distances = []
+        for j, poi_b in enumerate(pois):
+            if i == j:
+                continue
+            dist = m.dist(poi_a, poi_b)
+            distances.append((dist, j, poi_b))
 
-def node_finder(grid):
+        distances.sort(key=lambda x: x[0])
 
-    # across all cells in grid
+        count = 0
+        for _, j, poi_b in distances:
+            if count >= k:
+                break
 
+            path = astar(grid, tuple(poi_a), tuple(poi_b))
+            if path is None:
+                continue
 
-        # place node just outside of doors
-            # you could find these with a kernel, looking for a door flanked by walls, with interior on one side
+            cost = len(path)  # you can refine this later
 
-        # place node at building corners
-            # you could find these with a kernel, looking for an L-shape of 
+            edges.append({
+                "i": i,
+                "j": j,
+                "cost": cost,
+                "path": path
+            })
 
-        # place node at centroid of local door areas
+            count += 1
 
-
-    return grid
-
+    return pois, edges
 
 
 if __name__ == "__main__":
