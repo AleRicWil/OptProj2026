@@ -1,7 +1,7 @@
-
+from __future__ import annotations  # allows forward references
 import math
 from typing import Set, Tuple
-from __future__ import annotations  # allows forward references
+import matplotlib.pyplot as plt
 
 class Point:
     '''stores location of point, and paths connected to point'''
@@ -117,8 +117,6 @@ class Path:
 
         return math.atan2(dy, dx)
     
-
-    
     def is_near_parallel(self, other: Path, tolerance: float = 0.4) -> bool:
         '''checks for two paths to be within 22.5 degrees of each other, by default'''
         # 0.4 is about 22.5 degrees.
@@ -144,18 +142,18 @@ class Path:
         x3, y3 = other.p1.x, other.p1.y
         x4, y4 = other.p2.x, other.p2.y
 
-        # Compute denominator
+        # compute denominator
         denom = (x1 - x2)*(y3 - y4) - (y1 - y2)*(x3 - x4)
 
-        # Parallel or collinear
+        # parallel or collinear
         if abs(denom) < 1e-9:
             return None
 
-        # Intersection point (infinite lines)
+        # intersection point (infinite lines)
         px = ((x1*y2 - y1*x2)*(x3 - x4) - (x1 - x2)*(x3*y4 - y3*x4)) / denom
         py = ((x1*y2 - y1*x2)*(y3 - y4) - (y1 - y2)*(x3*y4 - y3*x4)) / denom
 
-        # Check if within both segments
+        # check if within both segments
         def within(a: float, b: float, c: float) -> bool:
             return min(a, b) < c < max(a, b)
 
@@ -307,18 +305,18 @@ class Network:
         if ip is None:
             return None
 
-        # Use centralized point management
+        # use centralized point management
         p_new = self.get_or_create_point(ip.y, ip.x)
 
-        # Store endpoints
+        # store endpoints
         a, b = p1.p1, p1.p2
         c, d = p2.p1, p2.p2
 
-        # Remove old paths
+        # remove old paths
         self.remove_path(p1)
         self.remove_path(p2)
 
-        # Rewire (self-loops are inherently avoided by add_path if desired)
+        # rewire (self-loops are inherently avoided by add_path if desired)
         self.add_path(a, p_new)
         self.add_path(p_new, b)
         self.add_path(c, p_new)
@@ -326,9 +324,34 @@ class Network:
 
         return p_new
 
-
     def __repr__(self) -> str:
         return f"Network(points={len(self.points)}, paths={len(self.paths)})"
+    
+    def plot_network(self, show_labels=False) -> None:
+        _, ax = plt.subplots()
+
+        # draw paths
+        for path in self.paths:
+            x1, y1 = path.p1.x, path.p1.y
+            x2, y2 = path.p2.x, path.p2.y
+
+            ax.plot([x1, x2], [y1, y2], 'b-')
+
+        # drawpoints
+        xs = [p.x for p in self.points]
+        ys = [p.y for p in self.points]
+
+        if show_labels:
+            for p in net.points:
+                ax.text(p.x + 0.1, p.y + 0.1, f"({p.y},{p.x})", fontsize=8)
+
+        ax.scatter(xs, ys, c='red', s=50, zorder=3)
+        ax.set_aspect('equal')
+        ax.set_xlabel("x")
+        ax.set_ylabel("y")
+        ax.set_title("Network Graph")
+        ax.grid(True)
+        plt.show()
 
 
 # get a list of all points of interest
@@ -341,5 +364,29 @@ class Network:
 
 # draw lines from poi to centroid, and from centroid to centroid?
 
+if __name__ == "__main__":
+    net = Network()
 
+    a = net.add_point(0, 0)
+    b = net.add_point(0, 5)
+    c = net.add_point(5, 5)
+    d = net.add_point(5, 0)
+    e = net.add_point(2, 2)
 
+    # Create edges
+    net.add_path(a, b)
+    net.add_path(b, c)
+    net.add_path(c, d)
+    net.add_path(d, a)
+
+    # Diagonal cross
+    net.add_path(a, c)
+    net.add_path(b, d)
+
+    # Connect center
+    net.add_path(e, a)
+    net.add_path(e, b)
+    net.add_path(e, c)
+    net.add_path(e, d)
+
+    net.plot_network(True)
