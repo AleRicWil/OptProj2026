@@ -194,6 +194,6 @@ if __name__ == "__main__":
     # basic = simple_space(5, 5, "corridor")
     # plot_grid(basic)
 
-    campus_plot = campus(64, (40.245751,-111.649794), (40.248344,-111.646590))
+    campus_plot = campus(100, (40.245751,-111.649794), (40.248344,-111.646590))
     plot_map(campus_plot)
     # print(visitables(campus_plot).shape)
