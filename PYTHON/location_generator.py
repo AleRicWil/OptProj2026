@@ -14,7 +14,8 @@ material = {
     "door": 2,
     "blocked": 3,
     "interior": 4,
-    "poi": 5
+    "poi": 5,
+    "node": 6,
 }
 
 color_map = {
@@ -180,9 +181,14 @@ def campus(resolution, p1, p2):
     return map
 
 
-def visitables(map):
-    """Returns a list of points that must be visitable (doors and pois)"""
-    spots = np.argwhere(np.isin(map, [material["door"], material["poi"]]))
+def visitables(map, mat="all"):
+    """Returns a list of points that are be visitable"""
+    if mat == "all":
+        # special case for when we want all of em
+        spots = np.argwhere(np.isin(map, [material["door"], material["poi"], material["node"]]))
+    else:
+        spots = np.argwhere(np.isin(map, [material[mat]]))
+
     return spots
 
 if __name__ == "__main__":

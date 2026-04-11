@@ -2,12 +2,14 @@ from __future__ import annotations  # allows forward references
 import math
 from typing import Set, Tuple
 import matplotlib.pyplot as plt
+from location_generator import material, color_map
 
 class Point:
     '''stores location of point, and paths connected to point'''
-    def __init__(self, y: int, x: int):
-        self.y = int(round(y))
-        self.x = int(round(x))
+    def __init__(self, y: int, x: int, mat: int = material["paved"]):
+        self.y = round(y)
+        self.x = round(x)
+        self.mat = mat
         self._paths: Set[Path] = set()  # paths connected to this point
 
     # update location when given one
@@ -60,14 +62,15 @@ class Point:
         return math.hypot(dy, dx)
 
     def __repr__(self) -> str:
-        return f"Point({self.y}, {self.x})"
+        return f"({self.y}, {self.x}), m={self.mat}"
 
 
 class Path:
     '''path between two points. ''' 
-    def __init__(self, p1: Point, p2: Point):
+    def __init__(self, p1: Point, p2: Point, mat: int = material["paved"]):
         self.p1: Point = p1
         self.p2: Point = p2
+        self.mat: int = mat
 
         # Register with points
         p1.connect_path(self)
@@ -165,13 +168,17 @@ class Path:
 
         return None
 
+    def crosses(self, other: Path) -> bool:
+        '''intersection(), but a bool instead of a Point | None'''
+        return self.intersection(other) is not None
+
     def disconnect(self) -> None:
         '''disconnects a path from its points (the path still remembers, but the points do not)'''
         self.p1.disconnect_path(self)
         self.p2.disconnect_path(self)
 
     def __repr__(self) -> str:
-        return f"Path({self.p1} <-> {self.p2})"
+        return f"({self.p1} <-> {self.p2})"
 
 
 # network class contains points and paths, and allows points to be added and removed
@@ -180,16 +187,24 @@ class Network:
         self.points: Set[Point] = set()
         self.paths: Set[Path] = set()
 
-    def add_point(self, y: int, x: int) -> Point:
-        '''add a new point to this network'''
-        p = Point(y, x)
+    def add_point(self, y: int, x: int, mat: int = material["paved"]) -> Point:
+        existing = self.get_point(y, x)
+        if existing:
+            # enforce consistency
+            if existing.mat != mat:
+                raise ValueError(
+                    f"{existing} already exists with material {existing.mat}"
+                )
+            return existing
+
+        p = Point(y, x, mat)
         self.points.add(p)
         return p
     
-    def add_points(self, points: list[Point]):
+    def add_points(self, points: list[Point], mat: int):
         '''add a bunch of points to the network at once'''
         for point in points:
-            self.add_point(point.y, point.x)
+            self.add_point(point.y, point.x, mat)
 
     def remove_point(self, point: Point) -> None:
         '''remove a point from this network'''
@@ -199,16 +214,29 @@ class Network:
 
         self.points.discard(point)
 
-    def add_path(self, p1: Point, p2: Point) -> Path:
+    def add_path(self, p1: Point, p2: Point, mat: int = material["paved"]) -> Path:
         '''add a path between two points in this network'''
+        # material compatibility check
+        if p1.mat != mat or p2.mat != mat:
+            return None
+
         # check p1's paths for duplicates
         for path in p1._paths:
             if p2 in (path.p1, path.p2):
                 return path
 
-        path = Path(p1, p2)
-        self.paths.add(path)
-        return path
+        new_path = Path(p1, p2, mat)
+
+        # if this is a walk path, ensure it doesn't cross any walls
+        if mat == material["paved"]:
+            for existing in self.paths:
+                if existing.mat == material["blocked"]:
+                    if new_path.crosses(existing):
+                        new_path.disconnect()
+                        return None
+
+        self.paths.add(new_path)
+        return new_path
 
     def remove_path(self, path: Path) -> None:
         '''removes one path from the network'''
@@ -330,34 +358,69 @@ class Network:
         self.add_path(p_new, d)
 
         return p_new
+    
+    def absorb_network(self, other: "Network") -> None:
+        # map from old points → new points
+        point_map: dict[Point, Point] = {}
+
+        # copy / reuse points
+        for p in other.points:
+            new_p = self.get_point(p.y, p.x)
+            if new_p:
+                # material check
+                if new_p.mat != p.mat:
+                    raise ValueError(
+                        f"Material conflict at {(p.y, p.x)}"
+                    )
+            else:
+                new_p = self.add_point(p.y, p.x, p.mat)
+
+        # recreate paths
+        for path in other.paths:
+            p1 = point_map[path.p1]
+            p2 = point_map[path.p2]
+
+            # preserve type (walk vs wall)
+            self.add_path(p1, p2, mat=path.mat)
+
+        point_map[p] = new_p
+
+        for path in other.paths:
+            self.add_path(point_map[path.p1], point_map[path.p2], kind=path.mat)
 
     def __repr__(self) -> str:
         return f"Network(points={len(self.points)}, paths={len(self.paths)})"
     
-    def plot_network(self, show_labels=False) -> None:
+    def plot_network(self, show_labels: bool = False) -> None:
         _, ax = plt.subplots()
-
-        # draw paths
         for path in self.paths:
             x1, y1 = path.p1.x, path.p1.y
             x2, y2 = path.p2.x, path.p2.y
+            color = color_map.get(path.mat)
+            ax.plot([x1, x2], [y1, y2], color=color, linewidth=2)
 
-            ax.plot([x1, x2], [y1, y2], 'b-')
+        xs = []
+        ys = []
+        colors = []
 
-        # drawpoints
-        xs = [p.x for p in self.points]
-        ys = [p.y for p in self.points]
+        for p in self.points:
+            xs.append(p.x)
+            ys.append(p.y)
+            color = color_map.get(p.mat)
+            colors.append(color)
+    
+        ax.scatter(xs, ys, c=colors, s=20, zorder=3)
 
         if show_labels:
             for p in self.points:
                 ax.text(p.x + 0.1, p.y + 0.1, f"({p.y},{p.x})", fontsize=8)
 
-        ax.scatter(xs, ys, c='red', s=50, zorder=3)
         ax.set_aspect('equal')
         ax.set_xlabel("x")
         ax.set_ylabel("y")
         ax.set_title("Network Graph")
         ax.grid(True)
+
         plt.show()
 
 
