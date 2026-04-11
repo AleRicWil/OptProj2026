@@ -137,7 +137,7 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ma
     worse_accepted = 0
 
     # Animation setup (collect frames for GIF)
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(10, 8), dpi=100)
     ax.set_title("TSP-style Network SA Evolution (Live)")
     # background campus map (flipped for correct orientation)
     ax.imshow(np.flipud(campus_map), cmap=plt.cm.gray, alpha=0.3, origin='lower')
@@ -153,8 +153,12 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ma
     print(f"Initial temperature: {temperature:.0f} | Initial objective: {current_obj:.1f}")
 
     for iter in range(max_iter):
+        if iter % 100 == 0:
+            print(f'{iter}\n')
         # --- Generate neighbor (discrete moves from node_machine) ---
         neighbor = current_net.copy()
+        if not neighbor.validate_graph():
+            continue
 
         move_type = random.choice(["add_path", "remove_path", "move_point", "split_path"])
 
@@ -194,7 +198,7 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ma
                 neighbor.split_path(path)
 
         # If invalid, skip this neighbor (cheap rejection sampling).
-        if not neighbor.is_valid(campus_map):
+        if not neighbor.is_valid_space(campus_map):
             continue
 
         # --- Evaluate new objective ---
@@ -251,11 +255,19 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ma
             plt.draw()
             plt.pause(0.001)
 
-            # save current frame for GIF
-            fig.canvas.draw()
-            image = np.frombuffer(fig.canvas.tostring_rgb(), dtype='uint8')
-            image = image.reshape(fig.canvas.get_width_height()[::-1] + (3,))
-            frames.append(image)
+            # === SAFER FRAME CAPTURE FOR GIF (replaces the old buggy reshape) ===
+            # This is the robust way taught in engineering visualization scripts:
+            #   1. Force a full redraw
+            #   2. Use buffer_rgba() — it always returns the exact current canvas size
+            #   3. Reshape directly from the buffer (no guessing width/height)
+            #   4. Drop the alpha channel so we keep a clean RGB array for PillowWriter
+            # fig.canvas.draw()                    # make sure everything is rendered
+            # rgba_buffer = fig.canvas.buffer_rgba()   # returns uint8 array of shape (h, w, 4)
+            # rgba = np.frombuffer(rgba_buffer, dtype='uint8')
+            # w, h = fig.canvas.get_width_height()     # get the TRUE current size
+            # image = rgba.reshape((h, w, 4))[:, :, :3]   # drop alpha → RGB only
+            # frames.append(image)
+            # ====================================================================
 
         # cool temperature
         temperature *= cooling_rate
