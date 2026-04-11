@@ -12,20 +12,23 @@ class Point:
         self.mat = mat
         self._paths: Set[Path] = set()  # paths connected to this point
 
-    # update location when given one
+
     def move(self, new_y: int, new_x: int) -> None:
         '''relocates a point to new coordinates'''
         self.y = new_y
         self.x = new_x
 
+
     def connect_path(self, path: Path) -> None:
         '''connects a path to this point'''
         self._paths.add(path)
+
 
     def incident_angles(self) -> list[tuple[Path, float]]:
         '''returns the angles of all paths connected to this point, from [0, 2*pi)'''
         return [(path, path.angle_at(self)) for path in self._paths]
     
+
     def ordered_paths_around(self) -> list[tuple[Path, float]]:
         '''returns all angles between all paths connected to this point, from [0, pi)'''
         return sorted(
@@ -33,6 +36,7 @@ class Point:
             key=lambda x: x[1]
         )
     
+
     def angular_gaps(self) -> list[float]:
         '''returns the angular distances between ^neighboring^ paths around this point'''
         ordered = self.ordered_paths_around()
@@ -51,15 +55,18 @@ class Point:
 
         return gaps
 
+
     def disconnect_path(self, path: Path) -> None:
         '''disconnects a path from this point'''
         self._paths.discard(path)
+
 
     def distance_to(self, other: Point) -> float:
         '''measures the straight-line distance from this point to another'''
         dy = self.y - other.y
         dx = self.x - other.x
         return math.hypot(dy, dx)
+
 
     def __repr__(self) -> str:
         return f"({self.y}, {self.x}), m={self.mat}"
@@ -76,9 +83,11 @@ class Path:
         p1.connect_path(self)
         p2.connect_path(self)
 
+
     def endpoints(self) -> Tuple[Point, Point]:
         '''gives tuple of endpoints of path'''
         return (self.p1, self.p2)
+
 
     def length(self) -> float:
         '''gives length of path as float'''
@@ -86,6 +95,7 @@ class Path:
         dx = self.p1.x - self.p2.x
         return math.hypot(dy, dx)
     
+
     def angle(self) -> float:
         '''returns the angle of this path as seen from above. angle in range [0 and pi)'''
         dy = self.p2.y - self.p1.y
@@ -101,11 +111,13 @@ class Path:
 
         return angle
     
+    
     def angle_difference(self, other: Path) -> float:
         '''returns the difference in angle between two paths. angle in range [0, pi/2)]'''
         diff = abs(self.angle() - other.angle())
         return min(diff, math.pi - diff)
     
+
     def angle_at(self, p: Point) -> float:
         '''returns the angle of this path as seen from point p. angle in range (-pi, pi]
         '''
@@ -120,10 +132,12 @@ class Path:
 
         return math.atan2(dy, dx)
     
+
     def is_near_parallel(self, other: Path, tolerance: float = 0.4) -> bool:
         '''checks for two paths to be within 22.5 degrees of each other, by default'''
         # 0.4 is about 22.5 degrees.
         return self.angle_difference(other) < tolerance
+    
     
     def endpoints_close(self, other: Path, tolerance: float = 1.0) -> bool:
         '''checks if the endpoints of two paths are within a tolerance of each otehr'''
@@ -133,11 +147,13 @@ class Path:
             for p2 in (other.p1, other.p2)
         )
     
+
     def is_similar_to(self, other: Path, angle_tol: float = 0.1, dist_tol: float = 1.0) -> bool:
         '''checks if two paths are near-parallel and have close endpoints'''
         return (self.is_near_parallel(other, angle_tol)
                 and self.endpoints_close(other, dist_tol))
     
+
     def intersection(self, other: Path) -> Point | None:
         '''returns a point, if one exists, of an intersection between two paths'''
         x1, y1 = self.p1.x, self.p1.y
@@ -168,14 +184,17 @@ class Path:
 
         return None
 
+
     def crosses(self, other: Path) -> bool:
         '''intersection(), but a bool instead of a Point | None'''
         return self.intersection(other) is not None
+
 
     def disconnect(self) -> None:
         '''disconnects a path from its points (the path still remembers, but the points do not)'''
         self.p1.disconnect_path(self)
         self.p2.disconnect_path(self)
+
 
     def __repr__(self) -> str:
         return f"({self.p1} <-> {self.p2})"
@@ -186,6 +205,7 @@ class Network:
     def __init__(self):
         self.points: Set[Point] = set()
         self.paths: Set[Path] = set()
+
 
     def add_point(self, y: int, x: int, mat: int = material["paved"]) -> Point:
         existing = self.get_point(y, x)
@@ -201,10 +221,12 @@ class Network:
         self.points.add(p)
         return p
     
+
     def add_points(self, points: list[Point], mat: int):
         '''add a bunch of points to the network at once'''
         for point in points:
             self.add_point(point.y, point.x, mat)
+
 
     def remove_point(self, point: Point) -> None:
         '''remove a point from this network'''
@@ -214,11 +236,9 @@ class Network:
 
         self.points.discard(point)
 
+
     def add_path(self, p1: Point, p2: Point, mat: int = material["paved"]) -> Path:
         '''add a path between two points in this network'''
-        # material compatibility check
-        if p1.mat != mat or p2.mat != mat:
-            return None
 
         # check p1's paths for duplicates
         for path in p1._paths:
@@ -238,14 +258,17 @@ class Network:
         self.paths.add(new_path)
         return new_path
 
+
     def remove_path(self, path: Path) -> None:
         '''removes one path from the network'''
         path.disconnect()
         self.paths.discard(path)
 
+
     def move_point(self, point: Point, new_y: int, new_x: int) -> None:
         '''moves a point in the network to a new location'''
         point.move(new_y, new_x)
+
 
     def merge_points(self, p1: Point, p2: Point, new_y: int, new_x: int) -> Point:
         '''merges two points, and all their paths, into one new point at new_y, new_x'''
@@ -286,6 +309,7 @@ class Network:
 
         return p_new
     
+
     def get_point(self, y: int, x: int) -> Point | None:
         '''checks if a point already exists at some specific coordinates'''
         for p in self.points:
@@ -293,6 +317,7 @@ class Network:
                 return p
         return None
     
+
     def determine_point(self, y: int, x: int) -> Point:
         '''checks if a point exists at a location, and either returns it or adds one there'''
         existing = self.get_point(y, x)
@@ -300,6 +325,7 @@ class Network:
             return existing
         return self.add_point(y, x)
     
+
     def get_path(net: Network, p1: Point, p2: Point) -> Path | None:
         '''given two points, return the path that corresponds to them'''
         for path in net.paths:
@@ -307,6 +333,7 @@ class Network:
                 return path
         return None
     
+
     def split_path(self, path: Path) -> Point:
         '''splits a path in half, adding a point at(near) the midpoint'''
         p1, p2 = path.p1, path.p2
@@ -333,6 +360,7 @@ class Network:
 
         return mid
     
+
     def split_on_intersection(self, p1: Path, p2: Path) -> Point | None:
         '''splits an intersection into four segments all connecting to the intersection point'''
         ip = p1.intersection(p2)
@@ -359,38 +387,36 @@ class Network:
 
         return p_new
     
-    def absorb_network(self, other: "Network") -> None:
-        # map from old points → new points
-        point_map: dict[Point, Point] = {}
 
-        # copy / reuse points
-        for p in other.points:
-            new_p = self.get_point(p.y, p.x)
-            if new_p:
-                # material check
-                if new_p.mat != p.mat:
-                    raise ValueError(
-                        f"Material conflict at {(p.y, p.x)}"
-                    )
-            else:
-                new_p = self.add_point(p.y, p.x, p.mat)
+    def add_building(self, p1: Point, p2: Point, mat: int = material["blocked"]) -> list[Point]:
+        """
+        creates a rectangular building using p1 and p2 as opposite corners.
+        returns the 4 corner points (in order).
+        """
+        y1, x1 = p1.y, p1.x
+        y2, x2 = p2.y, p2.x
+        corners_coords = [(y1, x1), (y1, x2), (y2, x2), (y2, x1)]
+        corners: list[Point] = []
 
-        # recreate paths
-        for path in other.paths:
-            p1 = point_map[path.p1]
-            p2 = point_map[path.p2]
+        for y, x in corners_coords:
+            pt = self.get_point(y, x)
+            # If the point doesn't exist, create it with the building material
+            if not pt:
+                pt = self.add_point(y, x, mat)
+            # If it DOES exist, we just use it as-is, regardless of its 'mat'
+            corners.append(pt)
 
-            # preserve type (walk vs wall)
-            self.add_path(p1, p2, mat=path.mat)
+        # connect edges (loop around)
+        for i in range(4):
+            self.add_path(corners[i], corners[(i + 1) % 4], mat=mat)
 
-        point_map[p] = new_p
+        return corners
 
-        for path in other.paths:
-            self.add_path(point_map[path.p1], point_map[path.p2], kind=path.mat)
 
     def __repr__(self) -> str:
         return f"Network(points={len(self.points)}, paths={len(self.paths)})"
     
+
     def plot_network(self, show_labels: bool = False) -> None:
         _, ax = plt.subplots()
         for path in self.paths:
@@ -420,7 +446,6 @@ class Network:
         ax.set_ylabel("y")
         ax.set_title("Network Graph")
         ax.grid(True)
-
         plt.show()
 
 

@@ -154,10 +154,12 @@ def campus(resolution, p1, p2):
     h = int(h*scale)
 
     map = np.zeros((w, h), dtype=np.uint8)
+    buildings_list = []
 
     for c1, c2 in buildings.values():
         point1 = (int(scale*(c1[0] - miny)), int(scale*(c1[1] - minx)))
         point2 = (int(scale*(c2[0] - miny)), int(scale*(c2[1] - minx)))
+        buildings_list.append((point1, point2))
         map = building(map, point1, point2)
 
     for door_list in doors.values():
@@ -178,7 +180,7 @@ def campus(resolution, p1, p2):
             if 0 <= y < map.shape[0] and 0 <= x < map.shape[1]:
                 map[y, x] = material["poi"]
 
-    return map
+    return map, buildings_list
 
 
 def visitables(map, mat="all"):
@@ -200,6 +202,6 @@ if __name__ == "__main__":
     # basic = simple_space(5, 5, "corridor")
     # plot_grid(basic)
 
-    campus_plot = campus(100, (40.245751,-111.649794), (40.248344,-111.646590))
+    campus_plot, _ = campus(100, (40.245751,-111.649794), (40.248344,-111.646590))
     plot_map(campus_plot)
     # print(visitables(campus_plot).shape)
