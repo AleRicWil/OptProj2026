@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 class Point:
     '''stores location of point, and paths connected to point'''
     def __init__(self, y: int, x: int):
-        self.y: int = y
-        self.x: int = x
+        self.y = int(round(y))
+        self.x = int(round(x))
         self._paths: Set[Path] = set()  # paths connected to this point
 
     # update location when given one
@@ -272,7 +272,14 @@ class Network:
             return existing
         return self.add_point(y, x)
     
-    def split_path_in_half(self, path: Path) -> Point:
+    def get_path(net: Network, p1: Point, p2: Point) -> Path | None:
+        '''given two points, return the path that corresponds to them'''
+        for path in net.paths:
+            if (path.p1 is p1 and path.p2 is p2) or (path.p1 is p2 and path.p2 is p1):
+                return path
+        return None
+    
+    def split_path(self, path: Path) -> Point:
         '''splits a path in half, adding a point at(near) the midpoint'''
         p1, p2 = path.p1, path.p2
 
@@ -367,11 +374,12 @@ class Network:
 if __name__ == "__main__":
     net = Network()
 
+    # make points
     a = net.add_point(0, 0)
     b = net.add_point(0, 5)
     c = net.add_point(5, 5)
     d = net.add_point(5, 0)
-    e = net.add_point(2, 2)
+    e = net.add_point(4, 2)
 
     # Create edges
     net.add_path(a, b)
@@ -388,5 +396,22 @@ if __name__ == "__main__":
     net.add_path(e, b)
     net.add_path(e, c)
     net.add_path(e, d)
+    net.plot_network(True)
 
+    # split intersection
+    ac = net.get_path(a, c)
+    bd = net.get_path(b, d)
+    f = net.split_on_intersection(ac, bd)
+    net.plot_network(True)
+
+    # move a point
+    net.move_point(f, 1, 3)    
+    net.plot_network(True)
+
+    # remove a point
+    net.remove_point(d) 
+    net.plot_network(True)
+
+    # remove a path
+    net.remove_path(net.get_path(a, b)) 
     net.plot_network(True)
