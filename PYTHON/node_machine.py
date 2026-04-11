@@ -189,7 +189,7 @@ class Network:
     def add_points(self, points: list[Point]):
         '''add a bunch of points to the network at once'''
         for point in points:
-            self.add_point(point)
+            self.add_point(point.y, point.x)
 
     def remove_point(self, point: Point) -> None:
         '''remove a point from this network'''
@@ -258,16 +258,16 @@ class Network:
 
         return p_new
     
-    def get_point_at(self, y: int, x: int) -> Point | None:
+    def get_point(self, y: int, x: int) -> Point | None:
         '''checks if a point already exists at some specific coordinates'''
         for p in self.points:
             if p.y == y and p.x == x:
                 return p
         return None
     
-    def get_or_create_point(self, y: int, x: int) -> Point:
+    def determine_point(self, y: int, x: int) -> Point:
         '''checks if a point exists at a location, and either returns it or adds one there'''
-        existing = self.get_point_at(y, x)
+        existing = self.get_point(y, x)
         if existing is not None:
             return existing
         return self.add_point(y, x)
@@ -292,7 +292,7 @@ class Network:
         x = int(round(mid_x))
 
         # resolve node existence separately
-        mid = self.get_or_create_point(y, x)
+        mid = self.determine_point(y, x)
 
         # avoid degenerate split
         if mid is p1 or mid is p2:
@@ -313,7 +313,7 @@ class Network:
             return None
 
         # use centralized point management
-        p_new = self.get_or_create_point(ip.y, ip.x)
+        p_new = self.determine_point(ip.y, ip.x)
 
         # store endpoints
         a, b = p1.p1, p1.p2
@@ -349,7 +349,7 @@ class Network:
         ys = [p.y for p in self.points]
 
         if show_labels:
-            for p in net.points:
+            for p in self.points:
                 ax.text(p.x + 0.1, p.y + 0.1, f"({p.y},{p.x})", fontsize=8)
 
         ax.scatter(xs, ys, c='red', s=50, zorder=3)
@@ -361,17 +361,7 @@ class Network:
         plt.show()
 
 
-# get a list of all points of interest
-
-# generating points of interest at building corners
-
-# look at clusters of 5 or 6 points of interest, and put a node near the centroid 
-# (so long as it isn't in a building or something)
-
-
-# draw lines from poi to centroid, and from centroid to centroid?
-
-if __name__ == "__main__":
+def example():
     net = Network()
 
     # make points
@@ -415,3 +405,6 @@ if __name__ == "__main__":
     # remove a path
     net.remove_path(net.get_path(a, b)) 
     net.plot_network(True)
+
+if __name__ == "__main__":
+    example()
