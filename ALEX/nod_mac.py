@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 from typing import Set, Tuple, List
 import matplotlib.pyplot as plt
+import numpy as np
 from loc_gen import material, color_map, line_crosses_building  # we import material for type checks
 
 class Point:
@@ -454,6 +455,63 @@ class Network:
         ax.set_ylabel("y")
         ax.set_title("Network Graph")
         ax.grid(True)
+        plt.show()
+
+        # ---------------------------------------------------------------------
+    # NEW DEBUG PLOT: shows campus map background + valid paved paths
+    #                 + invalid (rejected) candidates in red dashed lines
+    # ---------------------------------------------------------------------
+    def plot_initial_with_debug(self, campus_map, terminals: List[Point], invalid_attempts: list[tuple[Point, Point]] = None,
+                                title: str = "Greedy Initial Network + Rejected Candidates"):
+        """Debug visualization exactly as you requested.
+        
+        TEACHING PURPOSE (Engineering Design Optimization Ch. 8.4):
+          - Green solid lines = actual paved paths chosen by greedy.
+          - Red dashed lines = every candidate connection that was
+            rejected because it crossed a building (line_crosses_building).
+          - Background = the raster campus map so you instantly see
+            why a particular edge was invalid.
+          - Terminals highlighted with stars.
+        
+        This makes the constraint surface visible and is invaluable for
+        debugging the initial solution quality before SA starts.
+        """
+        fig, ax = plt.subplots(figsize=(12, 10), dpi=120)
+        
+        # 1. Campus map background (flipped for correct matplotlib orientation)
+        ax.imshow(np.flipud(campus_map), cmap=plt.cm.gray, alpha=0.35, origin='lower')
+        
+        # 2. Plot all VALID paved paths (same as your original plotter)
+        for path in self.paths:
+            if path.mat == material["paved"]:
+                ax.plot([path.p1.x, path.p2.x], [path.p1.y, path.p2.y],
+                        color='limegreen', linewidth=3, solid_capstyle='round')
+
+        # 3. Plot INVALID candidate connections (the new debug feature)
+        if invalid_attempts:
+            for src, tgt in invalid_attempts:
+                ax.plot([src.x, tgt.x], [src.y, tgt.y],
+                        color='red', linestyle='--', linewidth=1.5, alpha=0.7)
+
+        # 4. Plot ALL points
+        xs = [p.x for p in self.points]
+        ys = [p.y for p in self.points]
+        colors = [color_map.get(p.mat, 'blue') for p in self.points]
+        ax.scatter(xs, ys, c=colors, s=50, zorder=5, edgecolors='black', linewidth=0.5)
+
+        # 5. Highlight terminals (doors + POIs)
+        tx = [t.x for t in terminals]   # terminals is resolved in main script
+        ty = [t.y for t in terminals]
+        ax.scatter(tx, ty, c='gold', s=180, marker='*', zorder=6, edgecolors='darkred', linewidth=1.5,
+                   label='Terminals (must connect)')
+
+        ax.set_title(title, fontsize=14, fontweight='bold')
+        ax.set_xlabel("x (grid units)")
+        ax.set_ylabel("y (grid units)")
+        ax.legend(loc='upper right')
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
         plt.show()
 
     # -----------------------------------------------------------------------------
