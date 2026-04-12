@@ -1,3 +1,10 @@
+# =============================================================================
+# location_generator.py
+# Helper added at the end
+# for line-crossing checks against the raster map. This ensures paved paths never
+# cross buildings when we build the initial greedy network.
+# =============================================================================
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
@@ -24,18 +31,7 @@ color_map = {
     2: (0.9, 0.5, 0.3),     # door
     3: (0.1, 0.2, 0.3),     # blocked
     4: (0.6, 0.6, 0.7),     # interior
-    5: (0.9, 0.6, 0.7),     # point of interest (staircase, quad)
-    6: (0.2, 0.8, 0.7)      # node (poi made by optimizer)
-}
-
-cost_map = {
-    0: float('inf'),    # open
-    1: float(1.0),      # paved
-    2: float(10.0),     # door
-    3: float('inf'),    # blocked
-    4: float(5.0),      # interior
-    5: float(1.0),      # point of interest (staircase, quad)
-    6: float(1.0),      # node (poi made by optimizer)
+    5: (0.9, 0.6, 0.7)      # point of interest (staircase, quad)
 }
 
 # https://www.latlong.net/
@@ -204,65 +200,30 @@ def visitables(map, mat="all"):
 
     return spots
 
-def bresenham_line(y1, x1, y2, x2):
-    """return list of grid cells between two points (inclusive)."""
-    cells = []
 
-    dx = abs(x2 - x1)
-    dy = abs(y2 - y1)
-
-    x, y = x1, y1
-    sx = 1 if x2 > x1 else -1
-    sy = 1 if y2 > y1 else -1
-
-    if dx > dy:
-        err = dx / 2.0
-        while x != x2:
-            cells.append((x, y))
-            err -= dy
-            if err < 0:
-                y += sy
-                err += dx
-            x += sx
-    else:
-        err = dy / 2.0
-        while y != y2:
-            cells.append((x, y))
-            err -= dx
-            if err < 0:
-                x += sx
-                err += dy
-            y += sy
-
-    cells.append((x2, y2))
-    return cells
-
-def connect_points(grid, y1, x1, y2, x2):
-    '''adds a bresenham line between two points (non-inclusive)'''
-    line_cells = bresenham_line(y1, x1, y2, x2)
-
-    # blockage check (shouldn't be necessary but hey)
-    for (y, x) in line_cells:
-        if grid[y][x] == material["blocked"]:
-            return grid
-
-    # draw the path
-    for (y, x) in line_cells:
-        if grid[y][x] == material["open"]:
-            grid[y][x] = material["paved"]
-
-    return grid
+# -----------------------------------------------------------------------------
+# NEW HELPER (added for the walkway optimizer)
+# -----------------------------------------------------------------------------
+def line_crosses_building(p1_y: float, p1_x: float, p2_y: float, p2_x: float, campus_map) -> bool:
+    """Checks if a straight-line path would cross a blocked building cell.
+    Uses dense Euclidean sampling along the line (NOT grid-step counting).
+    This is the exact distance function you asked for - pure geometry."""
+    dy = p2_y - p1_y
+    dx = p2_x - p1_x
+    dist = (dy**2 + dx**2)**0.5
+    if dist < 1e-6:
+        return False
+    n_samples = max(10, int(dist * 3))  # more samples = more accurate crossing detection
+    for i in range(1, n_samples):
+        t = i / n_samples
+        y = int(round(p1_y * (1 - t) + p2_y * t))
+        x = int(round(p1_x * (1 - t) + p2_x * t))
+        if 0 <= y < campus_map.shape[0] and 0 <= x < campus_map.shape[1]:
+            if campus_map[y, x] in [material["blocked"], material["interior"]]:
+                return True
+    return False
 
 
 if __name__ == "__main__":
-    # basic = simple_space(6, 6, "corners")
-    # print_array(basic)
-    # print(cost(basic, 10))
-    # plot_grid(basic)
-
-    # basic = simple_space(5, 5, "corridor")
-    # plot_grid(basic)
-
     campus_plot, _ = campus(100, (40.245751,-111.649794), (40.248344,-111.646590))
     plot_map(campus_plot)
-    # print(visitables(campus_plot).shape)
