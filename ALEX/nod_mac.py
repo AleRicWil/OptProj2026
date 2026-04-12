@@ -566,13 +566,16 @@ class Network:
     def total_travel_time(self, terminals: List[Point]) -> float:
         """Sum of shortest-path distances between EVERY pair of terminals.
         Uses Dijkstra with Euclidean edge lengths. This is the main objective."""
-        if len(terminals) < 2:
-            return 0.0
+        terminals = self.resolve_terminals(terminals)
+
         if not self.is_connected(terminals):
             return 1e9  # huge penalty - disconnected graph is invalid
 
         adj, idx, _ = self.build_distance_dict(terminals)
+        
+        # 2. This lookup will now succeed because terminals contains 'live' objects
         term_ids = [idx[t] for t in terminals]
+        
         total = 0.0
         import heapq  # pure Python Dijkstra - no external libraries needed
         for start_idx in term_ids:
