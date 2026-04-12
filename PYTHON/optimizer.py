@@ -19,8 +19,6 @@ campus_network.add_points([Point(y, x) for y, x in pois], material["poi"])
 
 campus_network.plot_network()
 
-
-
 # 1st approach: fully connected network
 
 # for each node in the network
@@ -28,11 +26,6 @@ campus_network.plot_network()
     # if the node material isn't "blocked"
         # for all other nodes in the network not yet visited (yes I know this is expensive just humor me)
             # try to add a path from the first node to this one
-
-
-
-
-
 
 # look at clusters of 5 or 6 points of interest, and put a node near the centroid 
 # (so long as it isn't in a building or something)
