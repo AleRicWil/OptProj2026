@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from location_generator import material, color_map
 
 class Point:
-    '''stores location of point, and paths connected to point'''
+    '''point in integer space. has material and remembers connected paths'''
     def __init__(self, y: int, x: int, mat: int = material["paved"]):
         self.y = round(y)
         self.x = round(x)
@@ -37,23 +37,18 @@ class Point:
         )
     
 
-    def angular_gaps(self) -> list[float]:
-        '''returns the angular distances between ^neighboring^ paths around this point'''
-        ordered = self.ordered_paths_around()
-
-        if len(ordered) < 2:
-            return []
-
-        gaps = []
-
-        for i in range(len(ordered)):
-            a1 = ordered[i][1]
-            a2 = ordered[(i + 1) % len(ordered)][1]
-
-            diff = (a2 - a1) % (2 * math.pi)
-            gaps.append(diff)
-
-        return gaps
+    def get_turn_angle(self, path_from: Path, path_to: Path) -> float:
+        '''returns the turn angle from path_from to path_to, from: (0, pi]'''
+        # heading when arriving
+        in_heading = (path_from.angle_at(self) + math.pi) % (2 * math.pi)
+        
+        # heading when departing
+        out_heading = path_to.angle_at(self)
+        
+        # the shortest sweep between two angles
+        turn = (out_heading - in_heading + math.pi) % (2 * math.pi) - math.pi
+        
+        return abs(turn)
 
 
     def disconnect_path(self, path: Path) -> None:
@@ -73,7 +68,7 @@ class Point:
 
 
 class Path:
-    '''path between two points. ''' 
+    '''path between two points''' 
     def __init__(self, p1: Point, p2: Point, mat: int = material["paved"]):
         self.p1: Point = p1
         self.p2: Point = p2
@@ -119,8 +114,7 @@ class Path:
     
 
     def angle_at(self, p: Point) -> float:
-        '''returns the angle of this path as seen from point p. angle in range (-pi, pi]
-        '''
+        '''returns the angle of this path as seen from point p. angle in range (-pi, pi]'''
         if p is self.p1:
             dy = self.p2.y - self.p1.y
             dx = self.p2.x - self.p1.x
@@ -200,8 +194,8 @@ class Path:
         return f"({self.p1} <-> {self.p2})"
 
 
-# network class contains points and paths, and allows points to be added and removed
 class Network:
+    '''class for constructing a network consisting of points and paths. Lots of methods for adjustments'''
     def __init__(self):
         self.points: Set[Point] = set()
         self.paths: Set[Path] = set()
@@ -449,7 +443,7 @@ class Network:
         plt.show()
 
 
-def example():
+if __name__ == "__main__":
     net = Network()
 
     # make points
@@ -493,6 +487,3 @@ def example():
     # remove a path
     net.remove_path(net.get_path(a, b)) 
     net.plot_network(True)
-
-if __name__ == "__main__":
-    example()

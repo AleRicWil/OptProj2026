@@ -1,41 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from node_machine import *
+from location_generator import cost_map
 
-# =============================================================================
-# ENGINEERING OPTIMIZATION - HW 7.1: Traveling Salesman Problem (TSP)
-# =============================================================================
-
-# Set random seed for reproducibility (so your plots match the ones you turn in)
-np.random.seed(4)
-
-# -----------------------------------------------------------------------------
-# STEP 1: Generate the 50 points (continuous coordinates)
-# -----------------------------------------------------------------------------
-n_cities = 50
-points = np.zeros((n_cities, 2))
-points[0] = [0.0, 0.0]                              # fixed starting point
-points[1:] = np.random.uniform(0, 100, size=(49, 2))  # 49 random points
-
-print("Points generated. Start city (index 0) is at (0,0).")
-print(f"Example random point (city 1): {points[1]}")
-
-# -----------------------------------------------------------------------------
-# STEP 2: Pre-compute the full distance (cost) matrix
-# -----------------------------------------------------------------------------
-# For TSP efficiency we pre-compute all pairwise Euclidean distances once.
-# This turns the problem into a lookup table (common in real routing apps).
-dist_matrix = np.zeros((n_cities, n_cities))
-for i in range(n_cities):
-    for j in range(n_cities):
-        # Euclidean distance between city i and city j
-        dist_matrix[i, j] = np.linalg.norm(points[i] - points[j])
-
-print("Distance matrix ready (50 x 50).")
-
-# -----------------------------------------------------------------------------
-# Helper function: compute total tour length
-# -----------------------------------------------------------------------------
-def tour_length(tour, dist_matrix):
+def tsp_length(tour, dist_matrix):
     """Calculate the total distance of a tour (list of city indices).
     The tour must start and end at the same city (usually city 0).
     This is the objective function we want to *minimize*."""
@@ -46,11 +14,30 @@ def tour_length(tour, dist_matrix):
     total += dist_matrix[tour[-1], tour[0]]
     return total
 
-# -----------------------------------------------------------------------------
-# STEP 3: Greedy algorithm (nearest-neighbor heuristic)
-# -----------------------------------------------------------------------------
-# Start at city 0. At every step, go to the *closest* unvisited city.
-# This is a classic greedy heuristic - very fast, but myopic (no look-ahead).
+def networking_length(network: Network, k=3, cost_map=cost_map):
+    # for each door in network
+        # pick k other points in the network at random (random? we may want a better way to do this)
+            # find the greedy shortest paths to each of these, individually, and average the lengths
+                # if ever you CANNOT get to the other location, throw an error. Or return infinity?
+                # record the longest path found
+    
+    # take the sum, and divide it by (num_doors) to get our average path length for the whole network
+        # note, if we do this too randomly, this value can deviate a lot across evaluations. We may want a way
+        # to take like, the nearest point, the farthest point, and k random points in the middle? 
+    # return the length. Or something like that.
+
+    return ...
+
+def networking_angles(network: Network):
+
+    # perform a similar search to networking_length(), but instead of using distances, record the angles required for action
+    # at each intersection using Point.get_turn_angle(Path1, Path2).
+    # i say, don't count any angles below 45 degrees. That may just be me though. We could return 2 * (radians**2) or
+    # something like that to more aggressively reduce values beyond ~30 degrees or something like that
+
+    return ...
+
+
 def greedy_nearest_neighbor(dist_matrix, start_city=0):
     """Implements the greedy nearest-neighbor TSP heuristic.
     Returns a list of city indices forming a closed tour."""
@@ -78,36 +65,8 @@ def greedy_nearest_neighbor(dist_matrix, start_city=0):
     tour.append(start_city)
     return tour
 
-# Run greedy
-greedy_tour = greedy_nearest_neighbor(dist_matrix)
-greedy_distance = tour_length(greedy_tour, dist_matrix)
 
-print("\n=== GREEDY SOLUTION ===")
-print(f"Greedy tour distance: {greedy_distance:.2f} units")
-
-# -----------------------------------------------------------------------------
-# Plot the greedy path (homework requirement)
-# -----------------------------------------------------------------------------
-plt.figure(figsize=(8, 6))
-plt.scatter(points[:, 0], points[:, 1], c='blue', s=50, label='Cities')
-plt.scatter([points[0, 0]], [points[0, 1]], c='red', s=200, marker='*', label='Start (0,0)')
-# Draw the path (including return to start)
-for i in range(len(greedy_tour) - 1):
-    city_a = greedy_tour[i]
-    city_b = greedy_tour[i + 1]
-    plt.plot([points[city_a, 0], points[city_b, 0]],
-             [points[city_a, 1], points[city_b, 1]], 'r-', linewidth=1.5)
-plt.title('TSP - Greedy Nearest-Neighbor Path')
-plt.xlabel('x (units)')
-plt.ylabel('y (units)')
-plt.grid(True)
-plt.legend()
-
-# -----------------------------------------------------------------------------
-# STEP 4: Simulated Annealing (your custom discrete optimizer)
-# -----------------------------------------------------------------------------
-
-def simulated_annealing(dist_matrix, initial_tour, max_iter=20000,
+def simulated_annealing(dist_matrix, initial_tour, points, max_iter=20000,
                         initial_temp=10000.0, cooling_rate=0.9999):
     """Custom Simulated Annealing for TSP - NOW WITH EXPLICIT WORSE-PATH ACCEPTANCE.
     This is the exact edit you asked for: the algorithm will occasionally accept 
@@ -117,7 +76,7 @@ def simulated_annealing(dist_matrix, initial_tour, max_iter=20000,
     
     # Work with a copy of the tour (remove closing city for easier swapping)
     current_tour = initial_tour[:-1].copy()
-    current_distance = tour_length(current_tour + [current_tour[0]], dist_matrix)
+    current_distance = tsp_length(current_tour + [current_tour[0]], dist_matrix)
     
     best_tour = current_tour[:]
     best_distance = current_distance
@@ -134,6 +93,7 @@ def simulated_annealing(dist_matrix, initial_tour, max_iter=20000,
     ax.set_xlabel('x (units)')
     ax.set_ylabel('y (units)')
     ax.grid(True)
+    
     # Plot static cities & start once
     ax.scatter(points[:, 0], points[:, 1], c='blue', s=50, label='Cities')
     ax.scatter([points[0, 0]], [points[0, 1]], c='red', s=200, marker='*', label='Start')
@@ -155,7 +115,7 @@ def simulated_annealing(dist_matrix, initial_tour, max_iter=20000,
         new_tour = current_tour[:]
         new_tour[i], new_tour[j] = new_tour[j], new_tour[i]
         
-        new_distance = tour_length(new_tour + [new_tour[0]], dist_matrix)
+        new_distance = tsp_length(new_tour + [new_tour[0]], dist_matrix)
         delta = new_distance - current_distance
         
         # =====================================================================
@@ -214,52 +174,91 @@ def simulated_annealing(dist_matrix, initial_tour, max_iter=20000,
     return best_tour_closed, best_distance, convergence_history
 
 
-# Generate random initial tour (random layout)
-cities_to_shuffle = list(range(1, n_cities))      # exclude fixed start city 0
-np.random.shuffle(cities_to_shuffle)              # random permutation
-random_tour = [0] + cities_to_shuffle + [0]      # force start/end at city 0
+def homework_example():
+    # Set random seed for reproducibility (so your plots match the ones you turn in)
+    np.random.seed(4)
 
-print("\n=== RANDOM INITIAL TOUR GENERATED ===")
-print(f"Random tour distance (before SA): {tour_length(random_tour, dist_matrix):.2f}")
+    n_cities = 50
+    points = np.zeros((n_cities, 2))
+    points[0] = [0.0, 0.0]                              # fixed starting point
+    points[1:] = np.random.uniform(0, 100, size=(49, 2))  # 49 random points
 
-# Run simulated annealing
-sa_tour, sa_distance, convergence = simulated_annealing(
-    dist_matrix, random_tour, max_iter=2000000
-)
+    print("Points generated. Start city (index 0) is at (0,0).")
+    print(f"Example random point (city 1): {points[1]}")
 
-# -----------------------------------------------------------------------------
-# Plot the improved SA path (homework requirement)
-# -----------------------------------------------------------------------------
-plt.figure(figsize=(8, 6))
-plt.scatter(points[:, 0], points[:, 1], c='blue', s=50, label='Cities')
-plt.scatter([points[0, 0]], [points[0, 1]], c='red', s=200, marker='*', label='Start (0,0)')
-for i in range(len(sa_tour) - 1):
-    city_a = sa_tour[i]
-    city_b = sa_tour[i + 1]
-    plt.plot([points[city_a, 0], points[city_b, 0]],
-             [points[city_a, 1], points[city_b, 1]], 'g-', linewidth=1.5)
-plt.title('TSP - Improved Path after Simulated Annealing')
-plt.xlabel('x (units)')
-plt.ylabel('y (units)')
-plt.grid(True)
-plt.legend()
-plt.show()
+    # For TSP efficiency we pre-compute all pairwise Euclidean distances once.
+    # This turns the problem into a lookup table (common in real routing apps).
+    dist_matrix = np.zeros((n_cities, n_cities))
+    for i in range(n_cities):
+        for j in range(n_cities):
+            # Euclidean distance between city i and city j
+            dist_matrix[i, j] = np.linalg.norm(points[i] - points[j])
 
-# -----------------------------------------------------------------------------
-# Plot the convergence history (homework requirement)
-# -----------------------------------------------------------------------------
-plt.figure(figsize=(8, 5))
-plt.plot(convergence, color='purple', linewidth=1.5)
-plt.title('Convergence Plot - Best TSP Total Length vs. Iteration')
-plt.xlabel('Iteration')
-plt.ylabel('Best Tour Length (units)')
-plt.grid(True)
-plt.show()
+    print("Distance matrix ready (50 x 50).")
 
-# -----------------------------------------------------------------------------
-# Final report (for your homework submission)
-# -----------------------------------------------------------------------------
-print("\n=== FINAL RESULTS ===")
-print(f"Greedy algorithm total distance: {greedy_distance:.2f}")
-print(f"Simulated Annealing total distance: {sa_distance:.2f}")
-print(f"Improvement achieved: {((greedy_distance - sa_distance)/greedy_distance)*100:.1f}%")
+    # Run greedy
+    greedy_tour = greedy_nearest_neighbor(dist_matrix)
+    greedy_distance = tsp_length(greedy_tour, dist_matrix)
+
+    print("\n=== GREEDY SOLUTION ===")
+    print(f"Greedy tour distance: {greedy_distance:.2f} units")
+
+    plt.figure(figsize=(8, 6))
+    plt.scatter(points[:, 0], points[:, 1], c='blue', s=50, label='Cities')
+    plt.scatter([points[0, 0]], [points[0, 1]], c='red', s=200, marker='*', label='Start (0,0)')
+    # Draw the path (including return to start)
+    for i in range(len(greedy_tour) - 1):
+        city_a = greedy_tour[i]
+        city_b = greedy_tour[i + 1]
+        plt.plot([points[city_a, 0], points[city_b, 0]],
+                [points[city_a, 1], points[city_b, 1]], 'r-', linewidth=1.5)
+    plt.title('TSP - Greedy Nearest-Neighbor Path')
+    plt.xlabel('x (units)')
+    plt.ylabel('y (units)')
+    plt.grid(True)
+    plt.legend()
+
+    # Generate random initial tour (random layout)
+    cities_to_shuffle = list(range(1, n_cities))      # exclude fixed start city 0
+    np.random.shuffle(cities_to_shuffle)              # random permutation
+    random_tour = [0] + cities_to_shuffle + [0]      # force start/end at city 0
+
+    print("\n=== RANDOM INITIAL TOUR GENERATED ===")
+    print(f"Random tour distance (before SA): {tsp_length(random_tour, dist_matrix):.2f}")
+
+    # Run simulated annealing
+    sa_tour, sa_distance, convergence = simulated_annealing(
+        dist_matrix, random_tour, points, max_iter=2000000
+    )
+
+    plt.figure(figsize=(8, 6))
+    plt.scatter(points[:, 0], points[:, 1], c='blue', s=50, label='Cities')
+    plt.scatter([points[0, 0]], [points[0, 1]], c='red', s=200, marker='*', label='Start (0,0)')
+    for i in range(len(sa_tour) - 1):
+        city_a = sa_tour[i]
+        city_b = sa_tour[i + 1]
+        plt.plot([points[city_a, 0], points[city_b, 0]],
+                [points[city_a, 1], points[city_b, 1]], 'g-', linewidth=1.5)
+    plt.title('TSP - Improved Path after Simulated Annealing')
+    plt.xlabel('x (units)')
+    plt.ylabel('y (units)')
+    plt.grid(True)
+    plt.legend()
+    plt.show()
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(convergence, color='purple', linewidth=1.5)
+    plt.title('Convergence Plot - Best TSP Total Length vs. Iteration')
+    plt.xlabel('Iteration')
+    plt.ylabel('Best Tour Length (units)')
+    plt.grid(True)
+    plt.show()
+
+    print("\n=== FINAL RESULTS ===")
+    print(f"Greedy algorithm total distance: {greedy_distance:.2f}")
+    print(f"Simulated Annealing total distance: {sa_distance:.2f}")
+    print(f"Improvement achieved: {((greedy_distance - sa_distance)/greedy_distance)*100:.1f}%")
+
+
+if __name__ == "__main__":
+    homework_example()

@@ -24,7 +24,18 @@ color_map = {
     2: (0.9, 0.5, 0.3),     # door
     3: (0.1, 0.2, 0.3),     # blocked
     4: (0.6, 0.6, 0.7),     # interior
-    5: (0.9, 0.6, 0.7)      # point of interest (staircase, quad)
+    5: (0.9, 0.6, 0.7),     # point of interest (staircase, quad)
+    6: (0.2, 0.8, 0.7)      # node (poi made by optimizer)
+}
+
+cost_map = {
+    0: float('inf'),    # open
+    1: float(1.0),      # paved
+    2: float(10.0),     # door
+    3: float('inf'),    # blocked
+    4: float(5.0),      # interior
+    5: float(1.0),      # point of interest (staircase, quad)
+    6: float(1.0),      # node (poi made by optimizer)
 }
 
 # https://www.latlong.net/
@@ -192,6 +203,56 @@ def visitables(map, mat="all"):
         spots = np.argwhere(np.isin(map, [material[mat]]))
 
     return spots
+
+def bresenham_line(y1, x1, y2, x2):
+    """return list of grid cells between two points (inclusive)."""
+    cells = []
+
+    dx = abs(x2 - x1)
+    dy = abs(y2 - y1)
+
+    x, y = x1, y1
+    sx = 1 if x2 > x1 else -1
+    sy = 1 if y2 > y1 else -1
+
+    if dx > dy:
+        err = dx / 2.0
+        while x != x2:
+            cells.append((x, y))
+            err -= dy
+            if err < 0:
+                y += sy
+                err += dx
+            x += sx
+    else:
+        err = dy / 2.0
+        while y != y2:
+            cells.append((x, y))
+            err -= dx
+            if err < 0:
+                x += sx
+                err += dy
+            y += sy
+
+    cells.append((x2, y2))
+    return cells
+
+def connect_points(grid, y1, x1, y2, x2):
+    '''adds a bresenham line between two points (non-inclusive)'''
+    line_cells = bresenham_line(y1, x1, y2, x2)
+
+    # blockage check (shouldn't be necessary but hey)
+    for (y, x) in line_cells:
+        if grid[y][x] == material["blocked"]:
+            return grid
+
+    # draw the path
+    for (y, x) in line_cells:
+        if grid[y][x] == material["open"]:
+            grid[y][x] = material["paved"]
+
+    return grid
+
 
 if __name__ == "__main__":
     # basic = simple_space(6, 6, "corners")
