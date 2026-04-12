@@ -1,3 +1,0 @@
-I want to find the local steiner tree of every three or four or five points, minimizing paths, 
-but, if possible, minimizing travel distances.
-
