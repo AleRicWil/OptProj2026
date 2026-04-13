@@ -275,6 +275,9 @@ class Network:
                     mat in (material["door"], material["destination"])):
                     existing.mat = mat   # upgrade the material in-place
                     return existing
+                elif existing.mat == material["paved"] and mat in [material['node']]:
+                    existing.mat = mat
+                    return existing                                                    
                 else:
                     # true conflict (should never happen after the move_point fix)
                     raise ValueError(
@@ -527,6 +530,11 @@ class Network:
         door_xs = [p.x for p in self.points if p.mat == material['door']]
         door_ys = [p.y for p in self.points if p.mat == material['door']]
         ax.scatter(door_xs, door_ys, color=color_map[material['door']], s=45, zorder=5,
+                edgecolors='black', linewidth=0.6)
+        
+        node_xs = [p.x for p in self.points if p.mat == material['node']]
+        node_ys = [p.y for p in self.points if p.mat == material['node']]
+        ax.scatter(node_xs, node_ys, color=color_map[material['node']], s=45, zorder=5,
                 edgecolors='black', linewidth=0.6)
 
         dest_xs = [t.x for t in self.terminals]
