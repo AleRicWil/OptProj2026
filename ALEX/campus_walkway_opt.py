@@ -20,7 +20,7 @@ np.random.seed(42)  # reproducibility
 # =============================================================================
 USE_GREEDY_INITIAL = False   # Set to False to start SA from a random valid network
 USE_FULL_INITIAL = True
-DEBUG_INITIAL_LAYOUT = True   # Set to True to see invalid (building-crossing)
+DEBUG_INITIAL_LAYOUT = False   # Set to True to see invalid (building-crossing)
                               # candidate connections drawn as red dashed lines.
 GRID_RES = int(180)
 # =============================================================================
@@ -89,13 +89,10 @@ def allowed_to_connect(p1: Point, p2: Point, campus_map, door_to_building: dict[
     key1 = (p1.y, p1.x)
     key2 = (p2.y, p2.x)
    
-    if key1 in door_to_building.keys():
-        print('hoho')
-
     if (key1 in door_to_building and key2 in door_to_building and
         door_to_building[key1] == door_to_building[key2]):
         # Same building → always allowed (interior walk is fine)
-        print('Checked doors are on same building')
+        # print('Checked doors are on same building')
         return True
 
     # Different buildings or POI → must pass the original strict check
@@ -494,11 +491,11 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ma
     print(f"Worse moves accepted: {worse_accepted} (this is the SA magic!)")
 
     # Save animated GIF
-    print("Saving SA evolution animation as sa_evolution.gif ...")
-    ani = FuncAnimation(fig, lambda i: None, frames=len(frames), interval=50, repeat=False)
-    writer = PillowWriter(fps=15)
-    ani.save("sa_evolution.gif", writer=writer, dpi=100)
-    print("GIF saved!")
+    # print("Saving SA evolution animation as sa_evolution.gif ...")
+    # ani = FuncAnimation(fig, lambda i: None, frames=len(frames), interval=50, repeat=False)
+    # writer = PillowWriter(fps=15)
+    # ani.save("sa_evolution.gif", writer=writer, dpi=100)
+    # print("GIF saved!")
 
     return best_net, best_obj, history
 
@@ -508,10 +505,8 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ma
 # -----------------------------------------------------------------------------
 print('Running simulated annealing...')
 final_net, final_obj, convergence = simulated_annealing_network(
-    initial_net, terminals, max_iter=80000, budget=budget
+    initial_net, terminals, max_iter=10000, budget=budget
 )
-
-initial_paved = np.pi
 
 final_paved = final_net.total_paved_length()
 final_travel = final_net.total_travel_time(terminals)
