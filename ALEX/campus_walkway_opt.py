@@ -375,7 +375,7 @@ final_net, final_obj, convergence = simulated_annealing_network(
     initial_net, 
     initial_net.terminals,   # destinations only (doors are fixed inside the network)
     campus_map,
-    max_iter=2000,
+    max_iter=10000,
     initial_temp=1600.0,
     cooling_rate=0.99994,
     target_travel_factor=1.10,     # allow up to 10% travel-time increase
