@@ -9,7 +9,11 @@ import math
 from typing import Set, Tuple, List
 import matplotlib.pyplot as plt
 import numpy as np
-from loc_gen import material, color_map, line_crosses_building  # we import material for type checks
+import itertools
+from loc_gen import (
+    campus, material, visitables, line_crosses_building,
+    color_map, plot_map, doors, destinations
+)
 
 class Point:
     '''stores location of point, and paths connected to point'''
@@ -176,6 +180,81 @@ class Network:
         self.points: Set[Point] = set()
         self.paths: Set[Path] = set()
 
+    def build_map(self, campus_map, buildings_list):
+        '''Creates the entire map of campus with all buildings, doors, destinations'''
+        for p1, p2 in buildings_list:
+            self.add_building(p1, p2)
+
+        self.door_coords = list(visitables(campus_map, "door"))
+        self.door_points: list[Point] = []
+        for y, x in self.door_coords:
+            door_pt = self.add_point(y, x, material["door"])
+            self.door_points.append(door_pt)
+
+        self.dest_coords = list(visitables(campus_map, "destination"))
+        self.terminals: list[Point] = []
+        for y, x in self.dest_coords:
+            dest_pt = self.add_point(y, x, material["destination"])
+            self.terminals.append(dest_pt)
+
+        self.unique_pairs = list(itertools.combinations(self.terminals, 2))
+
+    def connect_interiors(self, GRID_RES, campus_map):
+        #   Each destination now connects to EVERY door of the building it belongs to.
+        #   This gives full interior connectivity (pedestrians can enter/exit via any door).
+
+        # Re-calculate the exact same scaling used when the campus map was built
+        # (this guarantees grid coordinates match the ones in visitables())
+        y1, x1 = (40.245751, -111.649794)
+        y2, x2 = (40.248344, -111.646590)
+        miny = min(y1, y2)
+        minx = min(x1, x2)
+        mind = min(max(y1, y2) - miny, max(x1, x2) - minx)
+        scale = int(GRID_RES / mind)
+
+        # Build mapping: doors-key → list of actual door Point objects in the network
+        from collections import defaultdict
+        building_to_doors = defaultdict(list)
+        for building_key, door_list in doors.items():
+            for d in door_list:
+                y_grid = int(scale * (d[0] - miny))
+                x_grid = int(scale * (d[1] - minx))
+                if 0 <= y_grid < campus_map.shape[0] and 0 <= x_grid < campus_map.shape[1]:
+                    door_pt = self.get_point(y_grid, x_grid)
+                    if door_pt:
+                        building_to_doors[building_key].append(door_pt)
+
+        # Helper: given a destination name (e.g. "eb_lobby"), return the matching building key
+        def get_building_key_for_dest(dest_name: str) -> str | None:
+            if not dest_name:
+                return None
+            prefix = dest_name.split('_')[0].lower()          # first part before any underscore
+            for building_key in doors.keys():
+                key_lower = building_key.lower()
+                # Match if prefix appears anywhere in the door key
+                if prefix in key_lower:
+                    return building_key
+            return None
+
+        # Add interior paths for every destination
+        self.interior_count = 0
+        for dest_name, coord_list in destinations.items():
+            building_key = get_building_key_for_dest(dest_name)
+
+            # Get the destination Point(s) from the network
+            for coord in coord_list:
+                dy = int(scale * (coord[0] - miny))
+                dx = int(scale * (coord[1] - minx))
+                dest_pt = self.get_point(dy, dx)
+                if not dest_pt:
+                    continue
+
+                if building_key and building_key in building_to_doors:
+                    # Connect to EVERY door in the matched building
+                    for door_pt in building_to_doors[building_key]:
+                        self.add_path(dest_pt, door_pt, material["interior"])
+                        self.interior_count += 1
+
     def add_point(self, y: int, x: int, mat: int = material["paved"]) -> Point:
         '''Add (or return existing) point at (y, x).
         ENHANCED: now allows safe material upgrades (paved → door/poi).
@@ -190,8 +269,8 @@ class Network:
             # === MATERIAL CONFLICT HANDLING (this fixes your exact error) ===
             if existing.mat != mat:
                 # Allow upgrade: paved -> door or poi (common in campus setup)
-                if (existing.mat == material["paved"] and 
-                    mat in (material["door"], material["poi"])):
+                if ((existing.mat == material["paved"] or existing.mat == material['blocked']) and 
+                    mat in (material["door"], material["destination"])):
                     existing.mat = mat   # upgrade the material in-place
                     return existing
                 else:
@@ -402,26 +481,19 @@ class Network:
     def add_building(self, p1: Point, p2: Point, mat: int = material["blocked"]) -> list[Point]:
         """
         creates a rectangular building using p1 and p2 as opposite corners.
-        returns the 4 corner points (in order).
         """
-        y1, x1 = p1.y, p1.x
-        y2, x2 = p2.y, p2.x
-        corners_coords = [(y1, x1), (y1, x2), (y2, x2), (y2, x1)]
-        corners: list[Point] = []
-
-        for y, x in corners_coords:
-            pt = self.get_point(y, x)
-            # If the point doesn't exist, create it with the building material
-            if not pt:
-                pt = self.add_point(y, x, mat)
-            # If it DOES exist, we just use it as-is, regardless of its 'mat'
-            corners.append(pt)
-
-        # connect edges (loop around)
-        for i in range(4):
-            self.add_path(corners[i], corners[(i + 1) % 4], mat=mat)
-
-        return corners
+        y1, x1 = p1
+        y2, x2 = p2
+        
+        c1 = self.add_point(min(y1, y2), min(x1, x2), material["blocked"])
+        c2 = self.add_point(min(y1, y2), max(x1, x2), material["blocked"])
+        c3 = self.add_point(max(y1, y2), max(x1, x2), material["blocked"])
+        c4 = self.add_point(max(y1, y2), min(x1, x2), material["blocked"])
+        # Connect them with blocked paths (these are never paved)
+        self.add_path(c1, c2, material["blocked"])
+        self.add_path(c2, c3, material["blocked"])
+        self.add_path(c3, c4, material["blocked"])
+        self.add_path(c4, c1, material["blocked"])
 
     def __repr__(self) -> str:
         return f"Network(points={len(self.points)}, paths={len(self.paths)})"
@@ -525,18 +597,18 @@ class Network:
         """Return only the points we must connect (doors + POIs)."""
         return [p for p in terminals if p in self.points]
 
-    def build_distance_dict(self, terminals: List[Point]) -> dict:
-        """Build adjacency dict for Dijkstra..."""
-        # NEW SAFETY: ignore any paths whose endpoints are not in this network
-        # (prevents KeyError if a previous bug left stale points)
+    def build_distance_dict(self, terminals: List[Point]) -> tuple:
+        """Build adjacency dict for Dijkstra. NOW INCLUDES interior paths for building-internal travel.
+        Paved = decision variables (cost we minimize). Interior = fixed (zero paving cost)."""
         point_list = list(self.points)
         idx = {p: i for i, p in enumerate(point_list)}
         
         adj = {i: [] for i in range(len(point_list))}
-        for path in list(self.paths):  # list() to avoid modification during iteration
-            if path.mat == material["paved"]:
+        for path in list(self.paths):
+            # BOTH paved (exterior) and interior (inside buildings) are used for travel time
+            if path.mat in (material["paved"], material["interior"]):
                 if path.p1 not in idx or path.p2 not in idx:
-                    continue  # skip bad paths silently
+                    continue
                 i = idx[path.p1]
                 j = idx[path.p2]
                 length = path.length()
@@ -563,21 +635,21 @@ class Network:
         term_ids = {idx[t] for t in terminals}
         return term_ids.issubset(visited)
 
-    def total_travel_time(self, terminals: List[Point]) -> float:
-        """Sum of shortest-path distances between EVERY pair of terminals.
-        Uses Dijkstra with Euclidean edge lengths. This is the main objective."""
-        terminals = self.resolve_terminals(terminals)
+    def total_travel_time(self, destinations: List[Point]) -> float:
+        """NEW objective: sum of shortest-path distances between EVERY pair of DESTINATIONS.
+        Uses hybrid graph = paved exterior paths + fixed interior door-to-destination edges.
+        Doors are no longer terminals. This is exactly what your SA optimizer will minimize."""
+        destinations = self.resolve_terminals(destinations)
+        if not destinations:
+            return 0.0
+        if not self.is_connected(destinations):
+            return 1e9
 
-        if not self.is_connected(terminals):
-            return 1e9  # huge penalty - disconnected graph is invalid
+        adj, idx, _ = self.build_distance_dict(destinations)
+        term_ids = [idx[t] for t in destinations]
 
-        adj, idx, _ = self.build_distance_dict(terminals)
-        
-        # 2. This lookup will now succeed because terminals contains 'live' objects
-        term_ids = [idx[t] for t in terminals]
-        
         total = 0.0
-        import heapq  # pure Python Dijkstra - no external libraries needed
+        import heapq
         for start_idx in term_ids:
             dist = {i: float('inf') for i in range(len(adj))}
             dist[start_idx] = 0
@@ -591,11 +663,10 @@ class Network:
                     if alt < dist[v]:
                         dist[v] = alt
                         heapq.heappush(pq, (alt, v))
-            # add distances to all other terminals
             for tid in term_ids:
                 if tid != start_idx:
                     total += dist[tid]
-        return total / 2  # each pair counted twice
+        return total / 2   # each pair counted twice
 
     def is_valid_space(self, campus_map) -> bool:
         """NEW HELPER: Returns True only if NO paved path crosses a building.

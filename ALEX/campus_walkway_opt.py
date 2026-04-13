@@ -67,8 +67,7 @@ print(f"Built same-building lookup for {len(door_to_building)} doors "
 print("Same-building door groups found:")
 for name in set(door_to_building.values()):
     count = list(door_to_building.values()).count(name)
-    print(f"  {name}: {count} doors\n")
-print(door_to_building)
+    print(f"  {name}: {count} doors")
 
 plot_map(campus_map)
 
@@ -367,7 +366,7 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ma
 
     for iter in range(max_iter):
         if iter % 100 == 0:
-            print(f'{iter}\n')
+            print(f'{iter} of {max_iter}\n')
         # --- Generate neighbor (discrete moves from node_machine) ---
         neighbor = current_net.copy()
         if not neighbor.validate_graph():
@@ -418,7 +417,7 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ma
         new_paved = neighbor.total_paved_length()
         new_obj = new_travel + 1000 * max(0, new_paved - budget)
 
-        # --- Metropolis acceptance (exact from book and your TSP code) ---
+        # --- Metropolis acceptance (exact from book) ---
         delta = new_obj - current_obj
         accepted = False
         if delta < 0:  # better move
@@ -441,7 +440,7 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ma
         history.append(best_obj)
 
         # --- Live plot & frame collection (every 500 iterations) ---
-        if iter % 500 == 0 or iter == max_iter - 1:
+        if iter % 100 == 0 or iter == max_iter - 1:
             ax.clear()
             ax.imshow(np.flipud(campus_map), cmap=plt.cm.gray, alpha=0.3, origin='lower')
             ax.set_title(f'SA Evolution - Iter {iter} | Best obj {best_obj:.1f} | T={temperature:.1f}')
@@ -465,7 +464,8 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ma
 
             ax.legend()
             plt.draw()
-            plt.pause(0.001)
+            fig.canvas.draw()
+            plt.pause(0.1)
 
             # === SAFER FRAME CAPTURE FOR GIF (replaces the old buggy reshape) ===
             # This is the robust way taught in engineering visualization scripts:
