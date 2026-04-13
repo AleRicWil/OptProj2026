@@ -184,11 +184,11 @@ def campus(resolution, p1, p2):
 
             # Four adjacent cells (up, down, left, right) — only if inside map
             # We only overwrite open/interior cells; never touch blocked walls
-            for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                ny, nx = cy + dy, cx + dx
-                if (0 <= ny < map.shape[0] and 0 <= nx < map.shape[1] and
-                    map[ny, nx] in (material["open"], material["interior"])):
-                    map[ny, nx] = material["door"]
+            # for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            #     ny, nx = cy + dy, cx + dx
+            #     if (0 <= ny < map.shape[0] and 0 <= nx < map.shape[1] and
+            #         map[ny, nx] in (material["open"], material["interior"])):
+            #         map[ny, nx] = material["door"]
 
     for dest_list in destinations.values():
         for coord in dest_list:
@@ -221,20 +221,68 @@ def line_crosses_building(p1_y: float, p1_x: float, p2_y: float, p2_x: float, ca
     """Checks if a straight-line path would cross a blocked building cell.
     Uses dense Euclidean sampling along the line (NOT grid-step counting).
     This is the exact distance function you asked for - pure geometry."""
-    dy = p2_y - p1_y
-    dx = p2_x - p1_x
-    dist = (dy**2 + dx**2)**0.5
-    if dist < 1e-6:
+    # Snap to integer grid (our campus_map is discrete)
+    y1 = int(round(p1_y))
+    x1 = int(round(p1_x))
+    y2 = int(round(p2_y))
+    x2 = int(round(p2_x))
+
+    # Helper: return the expanded portal cells for a point
+    def get_expanded_ports(y: int, x: int) -> list[tuple[int, int]]:
+        """Returns center + 4 orthogonal neighbors if this is a door cell.
+        Otherwise returns a single-cell list (no expansion for non-doors)."""
+        ports = [(y, x)]
+
+        # Only expand doors — checks the new single-cell door policy
+        rows, cols = campus_map.shape
+        if (0 <= y < rows and 0 <= x < cols and
+                campus_map[y, x] == material["door"]):
+            for dy, dx in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                ny, nx = y + dy, x + dx
+                if (0 <= ny < rows and 0 <= nx < cols and
+                        campus_map[ny, nx] != material["blocked"]):
+                    ports.append((ny, nx))
+        return ports
+
+    ports1 = get_expanded_ports(y1, x1)
+    ports2 = get_expanded_ports(y2, x2)
+
+    # Inner helper: pure Euclidean line sampling (original logic)
+    def _specific_line_crosses(sy: int, sx: int, ey: int, ex: int) -> bool:
+        """Returns True only if this exact line segment hits blocked or interior cells."""
+        dy = ey - sy
+        dx = ex - sx
+        dist = (dy**2 + dx**2)**0.5
+        if dist < 1e-6:
+            return False
+
+        # Dense sampling (more points on longer lines = more accurate)
+        n_samples = max(12, int(dist * 4))
+
+        for i in range(1, n_samples):          # skip exact endpoints (lenient on doors)
+            t = i / n_samples
+            py = int(round(sy * (1 - t) + ey * t))
+            px = int(round(sx * (1 - t) + ex * t))
+
+            if 0 <= py < campus_map.shape[0] and 0 <= px < campus_map.shape[1]:
+                cell = campus_map[py, px]
+                # Only blocked and interior count as "crossing a building"
+                # (door cells, open space, and paved are safe)
+                if cell in (material["blocked"], material["interior"]):
+                    return True
         return False
-    n_samples = max(10, int(dist * 3))  # more samples = more accurate crossing detection
-    for i in range(1, n_samples):
-        t = i / n_samples
-        y = int(round(p1_y * (1 - t) + p2_y * t))
-        x = int(round(p1_x * (1 - t) + p2_x * t))
-        if 0 <= y < campus_map.shape[0] and 0 <= x < campus_map.shape[1]:
-            if campus_map[y, x] in [material["blocked"], material["interior"]]:
-                return True
-    return False
+
+    # Main logic: brute-force every port combination
+    # (max 5 × 5 = 25 checks — negligible cost)
+    for sy, sx in ports1:
+        for ey, ex in ports2:
+            if sy == ey and sx == ex:          # degenerate case
+                continue
+            if not _specific_line_crosses(sy, sx, ey, ex):
+                return False   # Found at least one non-crossing route → ALLOWED
+
+    # Every possible port-to-port line crosses a building → REJECT
+    return True
 
 
 if __name__ == "__main__":

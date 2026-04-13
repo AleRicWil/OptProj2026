@@ -11,418 +11,331 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
 import random
+import heapq
 from loc_gen import campus, material, visitables, line_crosses_building, color_map, plot_map, doors
 from nod_mac import Network, Point  # your enhanced node_machine
 
 np.random.seed(42)  # reproducibility
 # =============================================================================
-# CONTROL FLAG — change this to experiment with different starting points
+# CONTROL FLAGs
 # =============================================================================
 USE_GREEDY_INITIAL = False   # Set to False to start SA from a random valid network
-USE_FULL_INITIAL = True
-DEBUG_INITIAL_LAYOUT = False   # Set to True to see invalid (building-crossing)
+USE_DENSE_INITIAL = True
+VIEW_INITIAL_LAYOUT = False   # Set to True to see invalid (building-crossing)
                               # candidate connections drawn as red dashed lines.
 GRID_RES = int(180)
 # =============================================================================
 
-# -----------------------------------------------------------------------------
-# STEP 1: Load campus map and identify terminals (doors + POIs)
-# -----------------------------------------------------------------------------
-print("Loading campus map...")
-campus_map, buildings_list = campus(resolution=GRID_RES, p1=(40.245751,-111.649794), p2=(40.248344,-111.646590))
+# =============================================================================
+# STEP 1: Load the campus raster map (same resolution used in the optimizer)
+# =============================================================================
+campus_map, buildings_list = campus(
+    resolution=GRID_RES,
+    p1=(40.245751, -111.649794),
+    p2=(40.248344, -111.646590)
+)
 
-# Extract all terminals that must be connected
-terminal_coords = []
-for spot in visitables(campus_map, "door"):
-    terminal_coords.append((spot[0], spot[1]))
-for spot in visitables(campus_map, "poi"):
-    terminal_coords.append((spot[0], spot[1]))
+# =============================================================================
+# STEP 2: Build the Network object
+# =============================================================================
+base_net = Network()
 
-print(f"Found {len(terminal_coords)} terminals (doors + POIs)")
+base_net.build_map(campus_map, buildings_list)
+print(f"Network initialized with {len(base_net.points)} constructing points "
+      f"({len(buildings_list)} buildings + {len(base_net.door_coords)} doors + {len(base_net.dest_coords)} destinations)")
 
-door_to_building: dict[tuple[int, int], str] = {}
-
-# Grab the exact coordinate bounds and scale that campus() used
-y1, x1 = (40.245751, -111.649794)
-y2, x2 = (40.248344, -111.646590)
-miny = min(y1, y2)
-minx = min(x1, x2)
-w = max(y1, y2) - miny
-h = max(x1, x2) - minx
-mind = min(w, h)
-resolution = GRID_RES                                # must match the call above
-scale = int(resolution / mind)
-
-for building_name, door_list in doors.items():
-    for d in door_list:
-        # convert lat/lon → grid coordinates exactly as campus() does
-        y_grid = int(scale * (d[0] - miny))
-        x_grid = int(scale * (d[1] - minx))
-        if 0 <= y_grid < campus_map.shape[0] and 0 <= x_grid < campus_map.shape[1]:
-            door_to_building[(y_grid, x_grid)] = building_name
-
-print(f"Built same-building lookup for {len(door_to_building)} doors "
-      f"(will now allow intra-building paved connections).")
-
-print("Same-building door groups found:")
-for name in set(door_to_building.values()):
-    count = list(door_to_building.values()).count(name)
-    print(f"  {name}: {count} doors")
-
-plot_map(campus_map)
-
-def allowed_to_connect(p1: Point, p2: Point, campus_map, door_to_building: dict[tuple[int, int], str]) -> bool:
-    """Returns True if a paved path between p1 and p2 is allowed.
-    
-    TEACHING CONCEPT (Engineering Design Optimization Ch. 8.4 Greedy / Ch. 8.6 SA):
-    - The original line_crosses_building() treated ALL interior cells as
-      forbidden → no paths could ever go through a building.
-    - We now add a PHYSICALLY REALISTIC EXCEPTION: if both points are doors
-      of the SAME building (according to the doors dict in loc_gen.py),
-      we ALLOW the connection even if the straight line crosses interior cells.
-      (Pedestrians can walk inside the building without needing exterior paving.)
-    - For doors of DIFFERENT buildings (or POI-to-anything), we keep the
-      strict geometric check — no building interiors may be crossed.
-    """
-    # Fast same-building check using the lookup we just built
-    key1 = (p1.y, p1.x)
-    key2 = (p2.y, p2.x)
-   
-    if (key1 in door_to_building and key2 in door_to_building and
-        door_to_building[key1] == door_to_building[key2]):
-        # Same building → always allowed (interior walk is fine)
-        # print('Checked doors are on same building')
-        return True
-
-    # Different buildings or POI → must pass the original strict check
-    return not line_crosses_building(p1.y, p1.x, p2.y, p2.x, campus_map)
-
-# -----------------------------------------------------------------------------
-# STEP 2: Build the Network with blocked building walls
-# -----------------------------------------------------------------------------
-net = Network()
-
-# Add buildings as blocked rectangular walls (prevents paved paths from crossing)
-for (y1, x1), (y2, x2) in buildings_list:
-    # create the four corner points with blocked material
-    c1 = net.add_point(min(y1, y2), min(x1, x2), material["blocked"])
-    c2 = net.add_point(min(y1, y2), max(x1, x2), material["blocked"])
-    c3 = net.add_point(max(y1, y2), max(x1, x2), material["blocked"])
-    c4 = net.add_point(max(y1, y2), min(x1, x2), material["blocked"])
-    # connect the walls with blocked paths
-    net.add_path(c1, c2, material["blocked"])
-    net.add_path(c2, c3, material["blocked"])
-    net.add_path(c3, c4, material["blocked"])
-    net.add_path(c4, c1, material["blocked"])
-
-# Add terminal points (doors & POIs) - these must be connected
-terminals: list[Point] = []
-for y, x in terminal_coords:
-    terminal_point = net.determine_point(y, x)
-    # force material to "door" or "poi" for nice coloring
-    if net.get_point(y, x).mat not in (material["door"], material["poi"]):
-        net.get_point(y, x).mat = material["door"]
-    terminals.append(terminal_point)
-
-print(f"Network initialized with {len(net.points)} total points and {len(net.paths)} paths and {len(terminals)} terminal points (buildings blocked)")
+base_net.connect_interiors(GRID_RES, campus_map)
+print(f"Added {base_net.interior_count} interior paths "
+      f"(each destination now linked to ALL doors of its building)")
+print(f"There are {len(base_net.unique_pairs)} unique destination pairs.")
 
 # ----------------------------------------------------------------------------- 
 # STEP 3: Build INITIAL solution (greedy OR fully connected OR random — controlled by flag)
 # -----------------------------------------------------------------------------
-def build_greedy_initial(net: Network, terminals: list[Point], campus_map, door_to_building: dict, debug: bool = DEBUG_INITIAL_LAYOUT):
-    """Greedy nearest-neighbor spanning tree (Ch. 8.4).
-    
-    NEW DEBUG FEATURE (for your request):
-      - When debug=True, we collect EVERY pair (src, tgt) that was
-        considered but REJECTED because line_crosses_building() returned True.
-      - These invalid attempts are returned as a list of (Point, Point) tuples.
-      - Later we plot them as red dashed lines on the campus map so you can
-        visually see exactly which connections the greedy algorithm WANTED
-        to make but was forced to skip because of buildings.
-    
-    This is perfect for debugging why certain door/POI pairs stay disconnected
-    in the initial layout and for understanding the impact of the
-    line_crosses_building geometric check.
+def build_dense_initial(net: Network, terminals: list[Point], door_points: list[Point], campus_map) -> Network:
+    """Builds a DENSE paved walkway network by attempting FULL connections between:
+       • Every destination (terminal/POI) to every other destination,
+       • Every destination to every door, and
+       • Every door to every other door.
+
+    TEACHING GOAL (Engineering Design Optimization, Ch. 8.4 "Greedy Algorithms" 
+    and Ch. 8.6 "Simulated Annealing"):
+      In our campus walkway project we are solving a classic discrete network 
+      design problem. The paved paths are the DECISION VARIABLES.
+      
+      A simple greedy MST (the function you already have) gives a minimal 
+      spanning tree — useful for a cheap starting point. 
+      
+      This dense builder creates a much richer initial graph: it adds 
+      almost every feasible paved edge that a pedestrian might actually use. 
+      This is exactly what professional Steiner-tree / road-network optimizers 
+      do before pruning with SA or other metaheuristics.
+      
+      Why is this helpful for learning?
+      1. It lets you instantly see (in the step_vis interactive stepper) how 
+         shortest-path travel times change when many routing options exist.
+      2. It gives Simulated Annealing a realistic "over-connected" starting 
+         design to improve upon — exactly the kind of initial solution you 
+         would hand an optimizer in a real campus-planning project.
+      3. It demonstrates constraint handling: we only add a paved edge if it 
+         does NOT cross a building (using the exact same line_crosses_building 
+         test you already use in the greedy builder).
+      
+      REAL-WORLD CAMPUS LOGIC (the key teaching insight):
+      - Doors inside the SAME building are allowed to connect directly with 
+        paved paths even if the straight line crosses interior cells 
+        (pedestrians can walk inside the building without needing exterior paving).
+      - All other connections (different buildings or POI-to-anything) must 
+        stay strictly outside buildings.
+      
+      This function is self-contained and can be dropped straight into 
+      step_vis.py right after your existing build_greedy_initial function.
     """
-    # === Resolve terminals safely (same robust code you already had) ===
-    term_map = {(p.y, p.x): p for p in net.points
-                if p.mat in (material["door"], material["poi"])}
-    resolved_terminals = [term_map[(t.y, t.x)] for t in terminals
-                          if (t.y, t.x) in term_map]
 
-    if not resolved_terminals:
-        return net, []   # return empty invalid list when debugging
-
-    connected = {resolved_terminals[0]}
-    remaining = set(resolved_terminals[1:])
-
-    invalid_attempts: list[tuple[Point, Point]] = []
-
-    while remaining:
-        best_dist = float('inf')
-        best_pair = None
-
-        for src in connected:
-            for tgt in remaining:
-                # === CHANGED LINE: use the new allowed check ===
-                if allowed_to_connect(src, tgt, campus_map, door_to_building):
-                    d = src.distance_to(tgt)
-                    if d < best_dist:
-                        best_dist = d
-                        best_pair = (src, tgt)
-                elif debug:
-                    invalid_attempts.append((src, tgt))   # still record true crossings
-
-        # ... (rest of the function unchanged)
-        if best_pair is None:
-            print("WARNING: Could not connect all terminals without crossing buildings!")
-            break
-        src, tgt = best_pair
-        net.add_path(src, tgt, material["paved"])
-        connected.add(tgt)
-        remaining.remove(tgt)
-
-    print(f"Greedy initial built with {len(net.paths)} paved paths "
-          f"({len(connected)}/{len(resolved_terminals)} terminals connected).")
-
-    if debug:
-        print(f"DEBUG: Collected {len(invalid_attempts)} invalid (building-crossing) "
-              f"candidate connections for visualization.")
-
-    return net, invalid_attempts if debug else []
-
-def build_fully_connected(net: Network, terminals: list[Point], campus_map, door_to_building: dict, debug: bool=DEBUG_INITIAL_LAYOUT):
-    '''connects every terminal directly to every other, regardless of blocked/building interference'''
-    # === Resolve terminals to THIS network's live Point objects ===
-    resolved_terminals = net.resolve_terminals(terminals)
+    # ------------------------------------------------------------------
+    # 1. Build the same-building lookup table (exactly as in campus_walkway_opt.py)
+    #    This is the realistic campus rule that makes door-to-door connections
+    #    inside one building allowed.
+    # ------------------------------------------------------------------
+    from collections import defaultdict
+    door_to_building: dict[tuple[int, int], str] = {}
     
-    if len(resolved_terminals) < 2:
-        print("WARNING: Fewer than 2 terminals — nothing to connect.")
-        return net, [] if debug else None
+    # Grab the exact coordinate scaling that campus() used when it built the map
+    y1, x1 = (40.245751, -111.649794)
+    y2, x2 = (40.248344, -111.646590)
+    miny = min(y1, y2)
+    minx = min(x1, x2)
+    mind = min(max(y1, y2) - miny, max(x1, x2) - minx)
+    scale = int(GRID_RES / mind)   # GRID_RES is already defined in step_vis.py
 
-    invalid_attempts: list[tuple[Point, Point]] = []   # for debug plot
+    for building_name, door_list in doors.items():   # doors dict is imported from loc_gen
+        for d in door_list:
+            y_grid = int(scale * (d[0] - miny))
+            x_grid = int(scale * (d[1] - minx))
+            if 0 <= y_grid < campus_map.shape[0] and 0 <= x_grid < campus_map.shape[1]:
+                door_to_building[(y_grid, x_grid)] = building_name
 
-    # Use combinations-style loop (i < j) to avoid self-loops and duplicate edges
-    n_term = len(resolved_terminals)
-    for i in range(n_term):
-        for j in range(i + 1, n_term):
-            p1 = resolved_terminals[i]
-            p2 = resolved_terminals[j]
+    # ------------------------------------------------------------------
+    # 2. Helper: allowed_to_connect (nested so the function stays self-contained)
+    #    This is the exact same safety check used in your main optimizer.
+    # ------------------------------------------------------------------
+    def allowed_to_connect(p1: Point, p2: Point) -> bool:
+        """Returns True only if a paved path is physically realistic."""
+        
+        # Different buildings or POI connections must not cross any building
+        return not line_crosses_building(p1.y, p1.x, p2.y, p2.x, campus_map)
 
-            # === CHANGED: use allowed_to_connect ===
-            if not allowed_to_connect(p1, p2, campus_map, door_to_building):
-                if debug:
-                    invalid_attempts.append((p1, p2))
-                continue   # different buildings and crosses → skip
+    # ------------------------------------------------------------------
+    # 3. Count existing paved paths so we can report how many we added
+    # ------------------------------------------------------------------
+    paved_before = len([p for p in net.paths if p.mat == material["paved"]])
+    print("Building DENSE pathway network (full connections between "
+          "destinations + doors)...")
 
-            # same-building or non-crossing → add it
-            net.add_path(p1, p2, material["paved"])
+    # ------------------------------------------------------------------
+    # 4. Door ↔ Door connections
+    # ------------------------------------------------------------------
+    print("   • Connecting every door to every other door...")
+    import itertools
+    for d1, d2 in itertools.combinations(door_points, 2):
+        if allowed_to_connect(d1, d2):
+            net.add_path(d1, d2, material["paved"])
 
-    total_possible = n_term * (n_term - 1) // 2
-    print(f"Fully-connected initial built with {len(net.paths)} paved paths "
-          f"({total_possible} direct terminal-to-terminal connections).")
+    # ------------------------------------------------------------------
+    # 5. Destination ↔ Destination connections
+    # ------------------------------------------------------------------
+    print("   • Connecting every destination to every other destination...")
+    for t1, t2 in itertools.combinations(terminals, 2):
+        if allowed_to_connect(t1, t2):
+            net.add_path(t1, t2, material["paved"])
 
-    if debug:
-        print(f"DEBUG: Collected {len(invalid_attempts)} invalid (building-crossing) "
-              f"candidate connections for visualization.")
+    # ------------------------------------------------------------------
+    # 6. Destination ↔ Door connections
+    # ------------------------------------------------------------------
+    print("   • Connecting every destination to every door...")
+    for dest in terminals:
+        for door in door_points:
+            if allowed_to_connect(dest, door):
+                net.add_path(dest, door, material["paved"])
 
-    return net, invalid_attempts if debug else []
+    # ------------------------------------------------------------------
+    # 7. Final report (great for learning how many edges your network now has)
+    # ------------------------------------------------------------------
+    paved_after = len([p for p in net.paths if p.mat == material["paved"]])
+    added = paved_after - paved_before
+    print(f"Dense pathway builder finished!")
+    print(f"   Added {added} new paved paths.")
+    print(f"   Total paved paths now: {paved_after} (this is your rich initial graph)")
+    print(f"   (Terminals remain fully connected via exterior paved + interior paths)")
 
-def build_random_initial(net: Network, terminals: list[Point], campus_map, door_to_building: dict, max_attempts: int = 10000) -> Network:
-    """Builds a RANDOM but VALID initial network for Simulated Annealing.
-    
-    TEACHING PURPOSE:
-    - Greedy (Ch. 8.4) always picks the shortest valid edge → very structured start.
-    - Random version picks edges stochastically → explores a wider variety of
-      starting topologies. This lets you study how sensitive SA is to the
-      initial design (a core concept in metaheuristics).
-    
-    How it works:
-    1. Resolve terminals to the current Network's Point objects (safety after copy()).
-    2. Start with one terminal as the "connected" component.
-    3. Repeatedly pick a random source (already connected) and random target
-       (still unconnected). Add the paved path ONLY if it does NOT cross buildings.
-    4. Stop when all terminals are connected (or we run out of attempts).
-    
-    Result = a random spanning-tree-like structure that is always:
-        - connected
-        - feasible (no building crossings)
-        - uses only paved edges between existing points (Steiner points are
-          still added later by SA via split_path / move_point).
-    
-    You can later add extra random edges or Steiner points if you want an
-    even more "noisy" starting point — this version keeps it simple and
-    directly comparable to the greedy tree.
-    """
-    # === Resolve terminals to THIS network's live Point objects ===
-    # (critical after net.copy() — prevents the exact KeyError you fixed earlier)
-    term_map = {(p.y, p.x): p for p in net.points
-                if p.mat in (material["door"], material["poi"])}
-    resolved_terminals = [term_map[(t.y, t.x)] for t in terminals
-                          if (t.y, t.x) in term_map]
-
-    if len(resolved_terminals) < 2:
-        print("WARNING: Fewer than 2 terminals — nothing to connect.")
-        return net
-
-    # Start with the first terminal in the connected set
-    connected = {resolved_terminals[0]}
-    remaining = set(resolved_terminals[1:])
-
-    attempts = 0
-    while remaining and attempts < max_attempts:
-        attempts += 1
-        src = random.choice(list(connected))
-        tgt = random.choice(list(remaining))
-
-        already_exists = any(...)   # keep your existing check
-
-        if not already_exists:
-            # === CHANGED: use allowed_to_connect ===
-            if allowed_to_connect(src, tgt, campus_map, door_to_building):
-                net.add_path(src, tgt, material["paved"])
-                connected.add(tgt)
-                remaining.remove(tgt)
-
-    if remaining:
-        print(f"WARNING: Random initial only connected {len(connected)}/"
-              f"{len(resolved_terminals)} terminals after {attempts} attempts.")
-        print("   (Some terminals may be isolated by buildings — SA can still fix this.)")
-
-    print(f"Random initial built with {len(net.paths)} paved paths "
-          f"({len(connected)} terminals connected).")
     return net
 
-print("\n=== BUILDING INITIAL NETWORK ===")
+initial_net = base_net.copy()   # fresh copy so we don't mutate the building-blocked base
+initial_net = build_dense_initial(initial_net, base_net.terminals, base_net.door_points, campus_map)
+# Resolve terminals to the live Point objects in this network (safety after any copies)
+initial_net.resolve_terminals()
 
-initial_net = net.copy()   # fresh copy so we don't mutate the building-blocked base
+print(f"Dense initial network built with "
+      f"{len([p for p in initial_net.paths if p.mat == material['paved']])} paved paths.")
 
-if USE_GREEDY_INITIAL:
-    print("Using GREEDY nearest-neighbor initial solution (Ch. 8.4)...")
-    initial_net, invalid_attempts = build_greedy_initial(initial_net, terminals, campus_map, door_to_building, debug=DEBUG_INITIAL_LAYOUT)
-elif USE_FULL_INITIAL:
-    print('Using FULLY CONNECTED valid initial solution...')
-    initial_net, invalid_attempts = build_fully_connected(initial_net, terminals, campus_map, door_to_building, debug=DEBUG_INITIAL_LAYOUT)
-else:
-    print("Using RANDOM valid initial solution...")
-    initial_net = build_random_initial(initial_net, terminals, campus_map, door_to_building)
-    invalid_attempts = []
-
-# === CRITICAL: resolve terminals to the new network's live objects ===
-# (works for both all builders)
-terminals = initial_net.resolve_terminals(terminals)
 
 # Compute metrics for reporting
 initial_paved = initial_net.total_paved_length()
-initial_travel = initial_net.total_travel_time(terminals)
+initial_travel = initial_net.total_travel_time()
 print(f"Initial paved length : {initial_paved:.1f}")
 print(f"Initial total travel time: {initial_travel:.1f}")
+initial_net.plot_network(campus_map)
 
-# Budget = 1.5 × initial length (still based on whatever start we chose)
-budget = initial_paved * 15
-print(f"Budget set to {budget:.1f} units")
-initial_net.plot_network()
+# ----------------------------------------------------------------------------- 
+# STEP 4: NEW Simulated Annealing (dense-initial pruning + Steiner-node hubs)
+# ----------------------------------------------------------------------------- 
+def simulated_annealing_network(initial_net: Network, terminals: list[Point], campus_map,
+                                max_iter=25000, initial_temp=1800.0, cooling_rate=0.99993,
+                                target_travel_factor=1.10, penalty_factor=380.0):
+    """NEW Simulated Annealing tailored for the dense-initial walkway network.
+    
+    TEACHING GOAL (Engineering Design Optimization, Ch. 8.6 "Simulated Annealing"):
+      Your campus walkway project is a classic *discrete network design* problem.
+      Decision variables = which paved edges exist + where intermediate 'node' hubs live.
+      
+      We start from the DENSE initial network you built (every feasible door-door,
+      dest-dest, and door-dest connection). This gives the absolute minimum possible
+      pedestrian travel time, but uses a lot of paving material.
+      
+      SA's job is now to *minimize paved material used* while keeping travel time
+      reasonable (we softly allow a controlled increase via target_travel_factor).
+      This mirrors real campus-planning practice: begin with an over-connected design
+      and prune intelligently.
+      
+      Key concepts from the book:
+      • Metropolis acceptance (Eq. 8.14) lets SA accept *worse* moves when temperature
+        is high — this is what lets the algorithm escape local minima and discover
+        clever Steiner-node placements.
+      • Temperature cools gradually (geometric schedule) so the search shifts from
+        broad exploration of network topologies to fine-tuning the best designs.
+      • Constraint handling is explicit and cheap: line_crosses_building() + 
+        is_valid_space() reject any infeasible neighbor instantly.
+      
+      Why this new approach is better for your project:
+      1. Terminals (doors + destinations) and interior paths are completely frozen.
+      2. Only paved paths and intermediate 'node' points (material["node"]) are changed.
+      3. Nodes act as natural hubs — pedestrians can converge on a node before
+         crossing a large open area, often saving total paving length.
+      4. Objective = paved_length + penalty_factor * max(0, travel_increase)
+         This directly implements the project goal: "minimize overall pedestrian
+         travel time AND for a given amount of paving material used."
+      
+      Moves are carefully chosen to keep the search efficient and realistic.
+    """
 
-# === DEBUG PLOT ===
-if DEBUG_INITIAL_LAYOUT:
-    print("\n=== DEBUG PLOT: Greedy layout + all rejected building-crossing candidates ===")
-    initial_net.plot_initial_with_debug(campus_map, terminals, invalid_attempts,
-                                        title="DEBUG: Greedy Initial + Invalid Candidates (red dashed)")
-
-# -----------------------------------------------------------------------------
-# STEP 4: Simulated Annealing (adapted from your TSP file + book Ch. 8.6)
-# -----------------------------------------------------------------------------
-def simulated_annealing_network(initial_net: Network, terminals: list[Point], max_iter=50000,
-                                initial_temp=5000.0, cooling_rate=0.99995, budget: float = None):
-    """Adapted SA for network design. State = entire Network object.
-    Neighbor moves: add/remove path, move non-terminal point, split path.
-    Objective = travel_time + penalty*(paved - budget)
-    Uses Metropolis acceptance of WORSE moves - the core of SA (book §8.6)."""
-
+    # Make a fresh working copy (nod_mac.py's robust deep copy guarantees
+    # terminals, doors, and interior paths stay exactly as they were)
     current_net = initial_net.copy()
     best_net = current_net.copy()
-    current_obj = current_net.total_travel_time(terminals) + 1000 * max(0, current_net.total_paved_length() - budget)
+
+    # Pre-compute all open-campus cells once (fast random node placement)
+    open_locations = np.argwhere(campus_map == material["open"])
+    open_locations = [tuple(loc) for loc in open_locations]
+
+    # Baseline metrics from the dense starting network
+    initial_travel = current_net.total_travel_time()
+    target_travel = initial_travel * target_travel_factor   # we allow a modest degradation
+    current_paved = current_net.total_paved_length()
+    current_travel = initial_travel
+    current_obj = current_paved + penalty_factor * max(0.0, current_travel - target_travel)
     best_obj = current_obj
 
     temperature = initial_temp
     history = [best_obj]
     worse_accepted = 0
 
-    # Animation setup (collect frames for GIF)
-    fig, ax = plt.subplots(figsize=(10, 8), dpi=100)
-    ax.set_title("TSP-style Network SA Evolution (Live)")
-    # background campus map (flipped for correct orientation)
-    ax.imshow(np.flipud(campus_map), cmap=plt.cm.gray, alpha=0.3, origin='lower')
-    # plot lines and points will be updated each frame
-    line_objs = []  # will hold line artists for paved paths
-    point_scat = ax.scatter([], [], c=[], s=30, zorder=5)
-    ax.set_aspect('equal')
-    plt.ion()
-
-    frames = []  # store frame data for GIF
-
-    print("\nStarting Simulated Annealing for walkway network...")
-    print(f"Initial temperature: {temperature:.0f} | Initial objective: {current_obj:.1f}")
+    print("\n=== Starting Simulated Annealing (dense → pruned network) ===")
+    print(f"Initial paved length : {current_paved:.1f} units")
+    print(f"Initial total travel time : {current_travel:.1f} units")
+    print(f"Target travel time (allowed) : {target_travel:.1f} ({target_travel_factor-1:.0%} increase)")
+    print(f"Initial temperature : {temperature:.0f} | Objective : {current_obj:.1f}\n")
 
     for iter in range(max_iter):
-        if iter % 100 == 0:
-            print(f'{iter} of {max_iter}\n')
-        # --- Generate neighbor (discrete moves from node_machine) ---
+        if iter % 500 == 0 and iter > 0:
+            print(f"Iter {iter:5d} | Temp {temperature:6.2f} | "
+                  f"Best obj {best_obj:8.1f} | Paved {current_paved:6.1f} | "
+                  f"Travel {current_travel:6.1f}")
+
+        # Generate a neighbor by copying the current network
         neighbor = current_net.copy()
-        if not neighbor.validate_graph():
-            continue
 
-        move_type = random.choice(["add_path", "remove_path", "move_point", "split_path"])
+        # Choose one discrete move (the five moves that let SA explore the design space)
+        move_type = random.choice(["add_node", "remove_node", "move_node", "add_path", "remove_path"])
 
-        if move_type == "add_path" and len(neighbor.points) > 1:
-            p1 = random.choice(list(neighbor.points))
-            p2 = random.choice(list(neighbor.points))
-            if p1 is not p2 and not any((p.p1 is p1 and p.p2 is p2) or (p.p1 is p2 and p.p2 is p1) for p in neighbor.paths):
-                if allowed_to_connect(p1, p2, campus_map, door_to_building):
-                    neighbor.add_path(p1, p2, material["paved"])
+        if move_type == "add_node" and open_locations:
+            # Add a brand-new Steiner node (hub) at a random open campus location.
+            # This is how we introduce extra connection points that can reduce total paving.
+            y, x = random.choice(open_locations)
+            neighbor.add_point(y, x, material["node"])
 
-        elif move_type == "remove_path" and neighbor.paths:
-            path_to_remove = random.choice(list(neighbor.paths))
-            if path_to_remove.mat == material["paved"]:
-                neighbor.remove_path(path_to_remove)
+        elif move_type == "remove_node":
+            # Remove an intermediate node (and all its paved paths).
+            # This is the opposite of add_node and lets SA aggressively prune useless hubs.
+            node_pts = [p for p in neighbor.points if p.mat == material["node"]]
+            if node_pts:
+                pt = random.choice(node_pts)
+                neighbor.remove_point(pt)   # nod_mac.py automatically cleans up incident paths
 
-        elif move_type == "move_point":
-            # move only non-terminal points (doors and POIs must stay fixed)
-            movable = [p for p in neighbor.points
-                       if p.mat not in (material["door"], material["poi"])]
-            if movable:
-                pt = random.choice(movable)
-                # small random move (discrete grid)
-                dy = random.randint(-2, 2)
-                dx = random.randint(-2, 2)
-                new_y = pt.y + dy
-                new_x = pt.x + dx
-                # only move if still inside map and doesn't create crossing issues
-                if 0 < new_y < campus_map.shape[0] and 0 < new_x < campus_map.shape[1]:
-                    if not line_crosses_building(pt.y, pt.x, new_y, new_x, campus_map):
-                        neighbor.move_point(pt, new_y, new_x)
+        elif move_type == "move_node":
+            # Move an existing node (only intermediate nodes can move — terminals stay fixed).
+            # Small random jitter helps the optimizer "slide" hubs into better positions.
+            node_pts = [p for p in neighbor.points if p.mat == material["node"]]
+            if node_pts:
+                pt = random.choice(node_pts)
+                dy = random.randint(-5, 5)
+                dx = random.randint(-5, 5)
+                new_y, new_x = pt.y + dy, pt.x + dx
+                if (0 <= new_y < campus_map.shape[0] and 
+                    0 <= new_x < campus_map.shape[1] and
+                    campus_map[new_y, new_x] not in (material["blocked"], material["interior"])):
+                    neighbor.move_point(pt, new_y, new_x)
 
-        elif move_type == "split_path" and neighbor.paths:
+        elif move_type == "add_path":
+            # Occasionally add a new paved connection (useful early when temperature is high).
+            # We only add if it does NOT cross any building.
+            pts = list(neighbor.points)
+            if len(pts) >= 2:
+                for _ in range(12):   # limited random trials for efficiency
+                    p1 = random.choice(pts)
+                    p2 = random.choice(pts)
+                    if p1 is not p2 and neighbor.get_path(p1, p2) is None:
+                        if not line_crosses_building(p1.y, p1.x, p2.y, p2.x, campus_map):
+                            neighbor.add_path(p1, p2, material["paved"])
+                            break
+
+        elif move_type == "remove_path":
+            # The main pruning move — remove a paved path to save material.
+            # This is what directly reduces the objective.
             paved_paths = [p for p in neighbor.paths if p.mat == material["paved"]]
             if paved_paths:
                 path = random.choice(paved_paths)
-                neighbor.split_path(path)
+                neighbor.remove_path(path)
 
-        # If invalid, skip this neighbor (cheap rejection sampling).
+        # After any move, reject the neighbor immediately if it violates space constraints
         if not neighbor.is_valid_space(campus_map):
             continue
 
-        # --- Evaluate new objective ---
-        new_travel = neighbor.total_travel_time(terminals)
+        # Evaluate the new candidate solution
         new_paved = neighbor.total_paved_length()
-        new_obj = new_travel + 1000 * max(0, new_paved - budget)
+        new_travel = neighbor.total_travel_time()
 
-        # --- Metropolis acceptance (exact from book) ---
+        # Huge penalty if the network becomes disconnected (travel blows up)
+        if new_travel > 1e8:
+            new_obj = 1e12
+        else:
+            new_obj = new_paved + penalty_factor * max(0.0, new_travel - target_travel)
+
+        # Metropolis acceptance criterion (the heart of SA — see book §8.6)
         delta = new_obj - current_obj
         accepted = False
-        if delta < 0:  # better move
+        if delta < 0:                     # always accept improvement
             accepted = True
-        else:  # worse move - accept probabilistically
+        else:                             # accept worse move probabilistically
             prob = np.exp(-delta / temperature)
             if random.random() < prob:
                 accepted = True
@@ -431,101 +344,63 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ma
         if accepted:
             current_net = neighbor
             current_obj = new_obj
+            current_paved = new_paved
+            current_travel = new_travel
 
-        # update best
+        # Update best solution found so far
         if current_obj < best_obj:
             best_net = current_net.copy()
             best_obj = current_obj
 
         history.append(best_obj)
 
-        # --- Live plot & frame collection (every 500 iterations) ---
-        if iter % 100 == 0 or iter == max_iter - 1:
-            ax.clear()
-            ax.imshow(np.flipud(campus_map), cmap=plt.cm.gray, alpha=0.3, origin='lower')
-            ax.set_title(f'SA Evolution - Iter {iter} | Best obj {best_obj:.1f} | T={temperature:.1f}')
-
-            # plot all paved paths
-            for path in best_net.paths:
-                if path.mat == material["paved"]:
-                    ax.plot([path.p1.x, path.p2.x], [path.p1.y, path.p2.y],
-                            'g-', linewidth=2, alpha=0.8)
-
-            # plot points
-            xs = [p.x for p in best_net.points]
-            ys = [p.y for p in best_net.points]
-            colors = [color_map.get(p.mat, 'blue') for p in best_net.points]
-            ax.scatter(xs, ys, c=colors, s=40, zorder=5)
-
-            # highlight terminals
-            tx = [t.x for t in terminals]
-            ty = [t.y for t in terminals]
-            ax.scatter(tx, ty, c='red', s=80, marker='*', zorder=6, label='Terminals')
-
-            ax.legend()
-            plt.draw()
-            fig.canvas.draw()
-            plt.pause(0.1)
-
-            # === SAFER FRAME CAPTURE FOR GIF (replaces the old buggy reshape) ===
-            # This is the robust way taught in engineering visualization scripts:
-            #   1. Force a full redraw
-            #   2. Use buffer_rgba() — it always returns the exact current canvas size
-            #   3. Reshape directly from the buffer (no guessing width/height)
-            #   4. Drop the alpha channel so we keep a clean RGB array for PillowWriter
-            # fig.canvas.draw()                    # make sure everything is rendered
-            # rgba_buffer = fig.canvas.buffer_rgba()   # returns uint8 array of shape (h, w, 4)
-            # rgba = np.frombuffer(rgba_buffer, dtype='uint8')
-            # w, h = fig.canvas.get_width_height()     # get the TRUE current size
-            # image = rgba.reshape((h, w, 4))[:, :, :3]   # drop alpha → RGB only
-            # frames.append(image)
-            # ====================================================================
-
-        # cool temperature
+        # Cool the temperature (geometric schedule)
         temperature *= cooling_rate
-        if temperature < 1e-5:
+        if temperature < 0.01:
             break
 
-    plt.ioff()
-    print(f"\nSA finished. Final objective: {best_obj:.1f}")
-    print(f"Worse moves accepted: {worse_accepted} (this is the SA magic!)")
-
-    # Save animated GIF
-    # print("Saving SA evolution animation as sa_evolution.gif ...")
-    # ani = FuncAnimation(fig, lambda i: None, frames=len(frames), interval=50, repeat=False)
-    # writer = PillowWriter(fps=15)
-    # ani.save("sa_evolution.gif", writer=writer, dpi=100)
-    # print("GIF saved!")
+    print(f"\nSA finished after {iter} iterations.")
+    print(f"Final objective: {best_obj:.1f}")
+    print(f"Worse moves accepted: {worse_accepted}  ← this is the SA magic that finds good hubs!")
 
     return best_net, best_obj, history
 
 
-# -----------------------------------------------------------------------------
-# RUN EVERYTHING
-# -----------------------------------------------------------------------------
-print('Running simulated annealing...')
+# ----------------------------------------------------------------------------- 
+# RUN EVERYTHING (updated for the new pruning-focused SA)
+# ----------------------------------------------------------------------------- 
+print('\nRunning simulated annealing on the dense initial network (pruning mode)...')
+
 final_net, final_obj, convergence = simulated_annealing_network(
-    initial_net, terminals, max_iter=10000, budget=budget
+    initial_net, 
+    initial_net.terminals,   # destinations only (doors are fixed inside the network)
+    campus_map,
+    max_iter=2000,
+    initial_temp=1600.0,
+    cooling_rate=0.99994,
+    target_travel_factor=1.10,     # allow up to 10% travel-time increase
+    penalty_factor=380.0           # tune this to trade off paving vs. travel
 )
 
 final_paved = final_net.total_paved_length()
-final_travel = final_net.total_travel_time(terminals)
+final_travel = final_net.total_travel_time()
 
 print("\n=== FINAL RESULTS (Engineering Optimization HW-style report) ===")
-print(f"Initial paved length : {initial_paved:.1f} | travel time: {initial_travel:.1f}")
-print(f"SA     paved length : {final_paved:.1f} | travel time: {final_travel:.1f}")
-print(f"Improvement in travel time: {((initial_travel - final_travel)/initial_travel)*100:.1f}%")
-print(f"Paving used vs budget: {final_paved:.1f} / {budget:.1f}")
+print(f"Initial (dense) paved length : {initial_paved:.1f} | travel time: {initial_travel:.1f}")
+print(f"SA-optimized paved length   : {final_paved:.1f} | travel time: {final_travel:.1f}")
+print(f"Paving material saved       : {initial_paved - final_paved:.1f} units "
+      f"({((initial_paved - final_paved)/initial_paved)*100:.1f}%)")
+if initial_travel > 0:
+    print(f"Travel-time change         : {((final_travel - initial_travel)/initial_travel)*100:.1f}%")
 
-# Final static plots
-final_net.plot_network(show_labels=False)  # uses your original plotter
+# Final static plots (uses your existing plotter)
+final_net.plot_network(campus_map)
 
-plt.figure()
-plt.plot(convergence, 'purple', lw=2)
-plt.title('Convergence - Best Objective vs Iteration')
+plt.figure(figsize=(10, 6))
+plt.plot(convergence, 'darkgreen', linewidth=2.5)
+plt.title('Simulated Annealing Convergence\n'
+          'Objective = Paved Length + Travel-Time Penalty')
 plt.xlabel('Iteration')
-plt.ylabel('Objective (travel time + penalty)')
-plt.grid(True)
+plt.ylabel('Objective Value')
+plt.grid(True, alpha=0.6)
 plt.show()
-
-print("\nAll done! Check sa_evolution.gif for the full animated optimization process.")

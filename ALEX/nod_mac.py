@@ -8,8 +8,10 @@ from __future__ import annotations
 import math
 from typing import Set, Tuple, List
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
 import numpy as np
 import itertools
+import heapq
 from loc_gen import (
     campus, material, visitables, line_crosses_building,
     color_map, plot_map, doors, destinations
@@ -498,35 +500,47 @@ class Network:
     def __repr__(self) -> str:
         return f"Network(points={len(self.points)}, paths={len(self.paths)})"
     
-    def plot_network(self, show_labels: bool = False) -> None:
-        _, ax = plt.subplots()
+    def plot_network(self, campus_map) -> None:
+        fig, ax = plt.subplots(figsize=(12, 9), dpi=90)
+        plt.subplots_adjust(bottom=0.18)
+
+        # Use the exact same colormap as loc_gen.py so the background matches perfectly
+        cmap = ListedColormap([color_map[i] for i in sorted(color_map.keys())])
+        ax.imshow(
+            campus_map,
+            cmap=cmap,
+            origin="lower",
+            vmin=0,
+            vmax=len(color_map) - 1
+        )
+
+        # Plot the full network once (green = paved, gray dashed = interior)
         for path in self.paths:
-            x1, y1 = path.p1.x, path.p1.y
-            x2, y2 = path.p2.x, path.p2.y
-            color = color_map.get(path.mat)
-            ax.plot([x1, x2], [y1, y2], color=color, linewidth=2)
+            if path.mat == material["paved"]:
+                ax.plot([path.p1.x, path.p2.x], [path.p1.y, path.p2.y],
+                        color='limegreen', linewidth=2.5, alpha=0.9, solid_capstyle='round')
+            elif path.mat == material["interior"]:
+                ax.plot([path.p1.x, path.p2.x], [path.p1.y, path.p2.y],
+                        color='gray', linestyle='--', linewidth=1.8, alpha=0.65)
 
-        xs = []
-        ys = []
-        colors = []
+        # Plot doors (small circles) and destinations (gold stars)
+        door_xs = [p.x for p in self.points if p.mat == material['door']]
+        door_ys = [p.y for p in self.points if p.mat == material['door']]
+        ax.scatter(door_xs, door_ys, color=color_map[material['door']], s=45, zorder=5,
+                edgecolors='black', linewidth=0.6)
 
-        for p in self.points:
-            xs.append(p.x)
-            ys.append(p.y)
-            color = color_map.get(p.mat)
-            colors.append(color)
-    
-        ax.scatter(xs, ys, c=colors, s=20, zorder=3)
+        dest_xs = [t.x for t in self.terminals]
+        dest_ys = [t.y for t in self.terminals]
+        ax.scatter(dest_xs, dest_ys, c='gold', s=160, marker='*', zorder=6,
+                edgecolors='darkred', linewidth=1.8, label='Destinations (terminals)')
 
-        if show_labels:
-            for p in self.points:
-                ax.text(p.x + 0.1, p.y + 0.1, f"({p.y},{p.x})", fontsize=8)
-
+        ax.set_xticks([])
+        ax.set_yticks([])
         ax.set_aspect('equal')
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.set_title("Network Graph")
-        ax.grid(True)
+        ax.set_title("Campus Walkway Network\n"
+                    "Green = paved walkways • Gray dashed = interior access",
+                    fontsize=14, fontweight='bold', pad=20)
+        ax.legend(loc='upper right')
         plt.show()
 
         # ---------------------------------------------------------------------
@@ -597,7 +611,7 @@ class Network:
         """Return only the points we must connect (doors + POIs)."""
         return [p for p in terminals if p in self.points]
 
-    def build_distance_dict(self, terminals: List[Point]) -> tuple:
+    def build_distance_dict(self) -> tuple:
         """Build adjacency dict for Dijkstra. NOW INCLUDES interior paths for building-internal travel.
         Paved = decision variables (cost we minimize). Interior = fixed (zero paving cost)."""
         point_list = list(self.points)
@@ -614,14 +628,15 @@ class Network:
                 length = path.length()
                 adj[i].append((j, length))
                 adj[j].append((i, length))
+
         return adj, idx, point_list
 
     def is_connected(self, terminals: List[Point]) -> bool:
         """Check if all terminals are in one connected component (pure graph connectivity)."""
         if not terminals:
             return True
-        terminals = self.resolve_terminals(terminals)
-        adj, idx, point_list = self.build_distance_dict(terminals)
+        terminals = self.resolve_terminals()
+        adj, idx, point_list = self.build_distance_dict()
         start = idx[terminals[0]]
         visited = set()
         stack = [start]
@@ -635,38 +650,99 @@ class Network:
         term_ids = {idx[t] for t in terminals}
         return term_ids.issubset(visited)
 
-    def total_travel_time(self, destinations: List[Point]) -> float:
+    def total_travel_time(self) -> float:
         """NEW objective: sum of shortest-path distances between EVERY pair of DESTINATIONS.
         Uses hybrid graph = paved exterior paths + fixed interior door-to-destination edges.
         Doors are no longer terminals. This is exactly what your SA optimizer will minimize."""
-        destinations = self.resolve_terminals(destinations)
-        if not destinations:
+        # ---------------------------------------------------------------------
+        # 2. CRITICAL SAFETY: Resolve stale terminal references
+        #    (After Network.copy() or neighbor moves, Python object identities
+        #     can become invalid. resolve_terminals() rebuilds the list using
+        #     coordinate lookup — this is the standard fix in graph-based
+        #     discrete optimizers.)
+        # ---------------------------------------------------------------------
+        self.resolve_terminals()          # updates self.terminals in place
+        destinations = self.terminals     # now guaranteed to be live objects
+
+        if not destinations or len(destinations) < 2:
             return 0.0
-        if not self.is_connected(destinations):
-            return 1e9
 
-        adj, idx, _ = self.build_distance_dict(destinations)
-        term_ids = [idx[t] for t in destinations]
+        # ---------------------------------------------------------------------
+        # 3. Fast connectivity check (pure graph traversal, no distances needed)
+        #    If any terminal is unreachable, the whole solution is invalid.
+        # ---------------------------------------------------------------------
+        # if not self.is_connected(destinations):
+        #     return 1e9   # massive penalty — tells SA "this is bad"
 
-        total = 0.0
-        import heapq
-        for start_idx in term_ids:
-            dist = {i: float('inf') for i in range(len(adj))}
-            dist[start_idx] = 0
-            pq = [(0, start_idx)]
-            while pq:
-                d, u = heapq.heappop(pq)
-                if d > dist[u]:
-                    continue
-                for v, weight in adj[u]:
-                    alt = d + weight
-                    if alt < dist[v]:
-                        dist[v] = alt
-                        heapq.heappush(pq, (alt, v))
-            for tid in term_ids:
-                if tid != start_idx:
-                    total += dist[tid]
-        return total / 2   # each pair counted twice
+        # ---------------------------------------------------------------------
+        # 4. Use pre-computed unique_pairs when available (set in build_map())
+        #    This avoids recomputing itertools.combinations on every call.
+        # ---------------------------------------------------------------------
+        if hasattr(self, 'unique_pairs') and self.unique_pairs:
+            pairs = self.unique_pairs
+        else:
+            pairs = list(itertools.combinations(destinations, 2))
+
+        # ---------------------------------------------------------------------
+        # 5. Sum shortest-path distances for every unique pair
+        #    This is exactly the "find the shortest route for each destination
+        #    pair" behavior you asked for.
+        # ---------------------------------------------------------------------
+        total_travel = 0.0
+        for start, goal in pairs:
+            # Delegate to the shared helper — reuses the identical Dijkstra
+            # implementation + predecessor reconstruction logic you already
+            # trust in get_shortest_route().
+            _, distance = self.get_shortest_route(start, goal)
+
+            if distance == float('inf') or distance >= 1e9:
+                return 1e9   # any disconnected pair makes the whole network invalid
+
+            total_travel += distance
+
+        return total_travel
+
+    def get_shortest_route(self, start: Point, goal: Point):
+        """Returns the list of points in the shortest path and the total Euclidean travel time.
+        Uses the exact same hybrid graph (paved + interior) that total_travel_time() uses
+        in your main optimizer. This is what SA is minimizing!"""
+        if start is goal:
+            return [start], 0.0
+
+        adj, idx, point_list = self.build_distance_dict()  # built-in helper from nod_mac.py
+
+        start_idx = idx[start]
+        goal_idx = idx[goal]
+
+        # Dijkstra (standard shortest-path algorithm)
+        dist = {i: float('inf') for i in range(len(adj))}
+        dist[start_idx] = 0.0
+        pred = {i: None for i in range(len(adj))}
+        pq = [(0.0, start_idx)]
+
+        while pq:
+            d, u = heapq.heappop(pq)
+            if d > dist[u]:
+                continue
+            for v, weight in adj[u]:
+                alt = d + weight
+                if alt < dist[v]:
+                    dist[v] = alt
+                    pred[v] = u
+                    heapq.heappush(pq, (alt, v))
+
+        if dist[goal_idx] == float('inf'):
+            return [], float('inf')
+
+        # Reconstruct path
+        path: list[Point] = []
+        current = goal_idx
+        while current is not None:
+            path.append(point_list[current])
+            current = pred[current]
+        path.reverse()
+
+        return path, dist[goal_idx]
 
     def is_valid_space(self, campus_map) -> bool:
         """NEW HELPER: Returns True only if NO paved path crosses a building.
@@ -703,43 +779,82 @@ class Network:
         This fix lets the SA loop run to completion (80 000+ iterations) without
         crashing even when neighbor moves temporarily violate the invariant.
         """
+        # Step 0: Create a fresh, empty Network instance
         new_net = Network()
         
-        # Step 1: Copy all points using coordinates (enforces uniqueness via add_point)
+        # =====================================================================
+        # 1. ROBUST COPY OF THE CORE GRAPH (points + paths)
+        # =====================================================================
+        # We use coordinates as the single source of truth (same technique
+        # that fixed the earlier KeyError bug). This guarantees that even if
+        # merge_points() or move_point() left temporary stale references,
+        # the copy remains perfectly consistent.
+        
         point_map: dict[Point, Point] = {}
-        for p in list(self.points):          # list() to be safe if points change
+        
+        # Copy every live Point using its (y, x, mat) triple
+        for p in list(self.points):          # list() protects against mutation
             new_p = new_net.add_point(p.y, p.x, p.mat)
             point_map[p] = new_p
         
-        # Step 2: Defensive fallback — include any stale points ONLY referenced by Paths
-        # (This is the exact line that fixes your KeyError!)
+        # Defensive fallback: any stale Point that only exists inside a Path
+        # (can happen right after a merge/split during neighbor generation)
         for path in list(self.paths):
             for endpoint in (path.p1, path.p2):
                 if endpoint not in point_map:
-                    # recreate the point by coordinate (material is preserved)
                     new_p = new_net.add_point(endpoint.y, endpoint.x, endpoint.mat)
                     point_map[endpoint] = new_p
         
-        # Step 3: Copy all paths using the new (safe) Point objects
+        # Now copy every Path, always using the NEW network's Point objects
         for path in list(self.paths):
             p1 = path.p1
             p2 = path.p2
-            
-            # Primary lookup (fast)
-            if p1 in point_map and p2 in point_map:
-                new_p1 = point_map[p1]
-                new_p2 = point_map[p2]
-            else:
-                # Fallback: resolve by coordinate (handles the exact stale case you saw)
-                new_p1 = new_net.determine_point(round(p1.y), round(p1.x))
-                new_p2 = new_net.determine_point(round(p2.y), round(p2.x))
-            
-            # add_path will safely ignore duplicates and blocked crossings
+            # Fast lookup through the map; fallback to coordinate resolution
+            new_p1 = point_map.get(p1, new_net.determine_point(round(p1.y), round(p1.x)))
+            new_p2 = point_map.get(p2, new_net.determine_point(round(p2.y), round(p2.x)))
             new_net.add_path(new_p1, new_p2, path.mat)
         
+        # =====================================================================
+        # 2. COPY ALL AUXILIARY ATTRIBUTES (the part you asked to add)
+        # =====================================================================
+        # These were set by build_map() and connect_interiors().
+        # We carry them over and remap any Point references so that
+        # total_travel_time(), is_connected(), resolve_terminals(), etc.
+        # work perfectly on the copy.
+        
+        if hasattr(self, 'door_coords'):
+            new_net.door_coords = list(self.door_coords)          # immutable tuples → safe shallow copy
+        
+        if hasattr(self, 'door_points'):
+            # door_points is a list[Point] – we MUST remap to the new objects
+            new_net.door_points = [point_map[p] for p in self.door_points]
+        
+        if hasattr(self, 'dest_coords'):
+            new_net.dest_coords = list(self.dest_coords)
+        
+        if hasattr(self, 'terminals'):
+            # terminals list is critical for travel-time objective
+            new_net.terminals = [
+                point_map.get(p, new_net.determine_point(round(p.y), round(p.x)))
+                for p in self.terminals
+            ]
+        
+        if hasattr(self, 'unique_pairs'):
+            # unique_pairs = list of (Point, Point) tuples for all-pairs combinations
+            new_net.unique_pairs = [
+                (point_map[p1], point_map[p2])
+                for p1, p2 in self.unique_pairs
+            ]
+        
+        if hasattr(self, 'interior_count'):
+            new_net.interior_count = self.interior_count   # integer – direct copy
+        
+        # =====================================================================
+        # 3. Return the fully-functional independent clone
+        # =====================================================================
         return new_net
 
-    def resolve_terminals(self, terminals_list: list[Point]) -> list[Point]:
+    def resolve_terminals(self) -> list[Point]:
         """CRITICAL SAFETY METHOD for any routine that uses Network.copy()
         
         After .copy() (or any graph reconstruction) the Point objects in the
@@ -760,16 +875,16 @@ class Network:
                 coord_map[(round(p.y), round(p.x))] = p
 
         resolved: list[Point] = []
-        for t in terminals_list:
+        for t in self.terminals:
             key = (round(t.y), round(t.x))
             if key in coord_map:
                 resolved.append(coord_map[key])
             else:
                 # safety fallback (should never trigger after the first greedy step)
-                print(f"WARNING: terminal at {key} not found in network — recreating")
+                # print(f"WARNING: terminal at {key} not found in network — recreating")
                 resolved.append(self.determine_point(key[0], key[1]))
         
-        return resolved
+        self.terminals = resolved
 
 
 # =============================================================================

@@ -29,9 +29,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button
 from matplotlib.colors import ListedColormap
-import itertools
 import heapq
-from collections import defaultdict
 
 # Import our project modules (all paths are relative — keep them in the same folder)
 from loc_gen import (
@@ -56,16 +54,16 @@ campus_map, buildings_list = campus(
 # =============================================================================
 # STEP 2: Build the Network object
 # =============================================================================
-net = Network()
+base_net = Network()
 
-net.build_map(campus_map, buildings_list)
-print(f"Network initialized with {len(net.points)} constructing points "
-      f"({len(buildings_list)} buildings + {len(net.door_coords)} doors + {len(net.dest_coords)} destinations)")
+base_net.build_map(campus_map, buildings_list)
+print(f"Network initialized with {len(base_net.points)} constructing points "
+      f"({len(buildings_list)} buildings + {len(base_net.door_coords)} doors + {len(base_net.dest_coords)} destinations)")
 
-net.connect_interiors(GRID_RES, campus_map)
-print(f"Added {net.interior_count} interior paths "
+base_net.connect_interiors(GRID_RES, campus_map)
+print(f"Added {base_net.interior_count} interior paths "
       f"(each destination now linked to ALL doors of its building)")
-print(f"There are {len(net.unique_pairs)} unique destination pairs.")
+print(f"There are {len(base_net.unique_pairs)} unique destination pairs.")
 
 # =============================================================================
 # STEP 4: Greedy nearest-neighbor initial network (Ch. 8.4)
@@ -115,7 +113,6 @@ def build_dense_initial(net: Network, terminals: list[Point], door_points: list[
     #    This is the realistic campus rule that makes door-to-door connections
     #    inside one building allowed.
     # ------------------------------------------------------------------
-    from collections import defaultdict
     door_to_building: dict[tuple[int, int], str] = {}
     
     # Grab the exact coordinate scaling that campus() used when it built the map
@@ -195,24 +192,24 @@ def build_dense_initial(net: Network, terminals: list[Point], door_points: list[
 
     return net
 
-net = build_dense_initial(net, net.terminals, net.door_points, campus_map)
-print(f"→ Greedy initial network built with "
-      f"{len([p for p in net.paths if p.mat == material['paved']])} paved paths.")
+dense_net = build_dense_initial(base_net, base_net.terminals, base_net.door_points, campus_map)
+print(f"Dense initial network built with "
+      f"{len([p for p in dense_net.paths if p.mat == material['paved']])} paved paths.")
 
 # Resolve terminals to the live Point objects in this network (safety after any copies)
-terminals = net.resolve_terminals(net.terminals)
+dense_net.resolve_terminals()
 
 # =============================================================================
 # STEP 5: Helper to compute shortest path between any two destinations
 # =============================================================================
-def get_shortest_path(net: Network, start: Point, goal: Point):
+def get_shortest_path(this_net: Network, start: Point, goal: Point):
     """Returns the list of points in the shortest path and the total Euclidean travel time.
     Uses the exact same hybrid graph (paved + interior) that total_travel_time() uses
     in your main optimizer. This is what SA is minimizing!"""
     if start is goal:
         return [start], 0.0
 
-    adj, idx, point_list = net.build_distance_dict(terminals)  # built-in helper from nod_mac.py
+    adj, idx, point_list = this_net.build_distance_dict()  # built-in helper from nod_mac.py
 
     start_idx = idx[start]
     goal_idx = idx[goal]
@@ -264,7 +261,7 @@ ax.imshow(
 )
 
 # Plot the full network once (green = paved, gray dashed = interior)
-for path in net.paths:
+for path in base_net.paths:
     if path.mat == material["paved"]:
         ax.plot([path.p1.x, path.p2.x], [path.p1.y, path.p2.y],
                 color='limegreen', linewidth=2.5, alpha=0.9, solid_capstyle='round')
@@ -273,13 +270,13 @@ for path in net.paths:
                 color='gray', linestyle='--', linewidth=1.8, alpha=0.65)
 
 # Plot doors (small circles) and destinations (gold stars)
-door_xs = [p.x for p in net.points if p.mat == material['door']]
-door_ys = [p.y for p in net.points if p.mat == material['door']]
+door_xs = [p.x for p in base_net.points if p.mat == material['door']]
+door_ys = [p.y for p in base_net.points if p.mat == material['door']]
 ax.scatter(door_xs, door_ys, color=color_map[material['door']], s=45, zorder=5,
            edgecolors='black', linewidth=0.6)
 
-dest_xs = [t.x for t in terminals]
-dest_ys = [t.y for t in terminals]
+dest_xs = [t.x for t in dense_net.terminals]
+dest_ys = [t.y for t in dense_net.terminals]
 ax.scatter(dest_xs, dest_ys, c='gold', s=160, marker='*', zorder=6,
            edgecolors='darkred', linewidth=1.8, label='Destinations (terminals)')
 
@@ -308,8 +305,8 @@ def update_visualization():
         line.remove()
     route_lines.clear()
 
-    start, goal = net.unique_pairs[current_pair_idx]
-    path_points, travel_time = get_shortest_path(net, start, goal)
+    start, goal = base_net.unique_pairs[current_pair_idx]
+    path_points, travel_time = get_shortest_path(dense_net, start, goal)
 
     if path_points:
         for i in range(len(path_points) - 1):
@@ -320,7 +317,7 @@ def update_visualization():
             route_lines.append(line)
 
         info_text.set_text(
-            f"Pair {current_pair_idx + 1}/{len(net.unique_pairs)}\n"
+            f"Pair {current_pair_idx + 1}/{len(base_net.unique_pairs)}\n"
             f"From → To: Destination pair\n"
             f"Shortest travel time: {travel_time:.1f} grid units"
         )
@@ -332,13 +329,13 @@ def update_visualization():
 
 def next_pair(event):
     global current_pair_idx
-    current_pair_idx = (current_pair_idx + 1) % len(net.unique_pairs)
+    current_pair_idx = (current_pair_idx + 1) % len(base_net.unique_pairs)
     update_visualization()
 
 
 def prev_pair(event):
     global current_pair_idx
-    current_pair_idx = (current_pair_idx - 1) % len(net.unique_pairs)
+    current_pair_idx = (current_pair_idx - 1) % len(base_net.unique_pairs)
     update_visualization()
 
 
