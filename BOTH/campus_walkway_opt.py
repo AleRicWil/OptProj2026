@@ -9,10 +9,10 @@
 
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation, PillowWriter
 import random
-import heapq
-from loc_gen import campus, material, visitables, line_crosses_building, color_map, plot_map, doors
+import itertools
+import collections
+from loc_gen import campus, material, line_crosses_building, doors
 from nod_mac import Network, Point  # your enhanced node_machine
 
 np.random.seed(42)  # reproducibility
@@ -184,14 +184,14 @@ initial_paved = initial_net.total_paved_length()
 initial_travel = initial_net.total_travel_time()
 print(f"Initial paved length : {initial_paved:.1f}")
 print(f"Initial total travel time: {initial_travel:.1f}")
-initial_net.plot_network(campus_map)
+# initial_net.plot_network(campus_map)
 
 # ----------------------------------------------------------------------------- 
 # STEP 4: NEW Simulated Annealing (dense-initial pruning + Steiner-node hubs)
 # ----------------------------------------------------------------------------- 
 def simulated_annealing_network(initial_net: Network, terminals: list[Point], campus_map,
                                 max_iter=25000, initial_temp=1800.0, cooling_rate=0.99993,
-                                target_travel_factor=1.10, penalty_factor=380.0, kmax=3):
+                                target_travel_factor=1.10, weight = 25, kmax=3):
     """NEW Simulated Annealing tailored for the dense-initial walkway network.
     
     TEACHING GOAL (Engineering Design Optimization, Ch. 8.6 "Simulated Annealing"):
@@ -242,7 +242,8 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
     target_travel = initial_travel * target_travel_factor   # we allow a modest degradation
     current_paved = current_net.total_paved_length()
     current_travel = initial_travel
-    current_obj = current_paved + penalty_factor * max(0.0, current_travel - target_travel)
+
+    current_obj = 1 + weight
     best_obj = current_obj
 
     temperature = initial_temp
@@ -260,19 +261,16 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
         neighbor = current_net.copy()
 
         # Choose one discrete move (the five moves that let SA explore the design space)
-        move_type = random.choice(["add_node", "remove_node", "move_node", "add_path", "remove_path"])
+        move_types = ["add_node", "remove_node", "move_node", "break_intersection", "add_path", "remove_path"]
+        move_weights = [0.2, 0.1, 0.2, 0.1, 0.1, 0.3] 
+
+        # Inside your SA loop:
+        move_type = random.choices(move_types, weights=move_weights, k=1)[0]
 
         if move_type == "add_node" and open_locations:
             # Add a brand-new Steiner node (hub) at a random open campus location.
             # This is how we introduce extra connection points that can reduce total paving.
-
-            # identify crossing lines stochastically, so we're not too expensive
-                # pick four paths in neighbor
-                    # if any of them cross each other, use Path.intersection(p1, p2) to identify a good point for a node
-                        # use that point instead of random y, x
-            
             y, x = random.choice(open_locations)
-
             new_node = neighbor.add_point(y, x, material["node"])
 
             # find local candidates
@@ -297,14 +295,57 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
             if connections_made < 2:
                 neighbor.remove_point(new_node)
 
+        elif move_type == "break_intersection":
+            grid_size = 40
+            buckets = collections.defaultdict(list)
+            
+            for path in neighbor.paths:
+                # Find the bounding box of the path
+                min_x = min(path.p1.x, path.p2.x)
+                max_x = max(path.p1.x, path.p2.x)
+                min_y = min(path.p1.y, path.p2.y)
+                max_y = max(path.p1.y, path.p2.y)
+                
+                # Identify which grid cells this path touches
+                start_col, end_col = int(min_x // grid_size), int(max_x // grid_size)
+                start_row, end_row = int(min_y // grid_size), int(max_y // grid_size)
+                
+                for r in range(start_row, end_row + 1):
+                    for c in range(start_col, end_col + 1):
+                        buckets[(r, c)].append(path)
+
+            # 2. Filter for buckets that actually have potential intersections
+            candidate_buckets = [paths for paths in buckets.values() if len(paths) >= 2]
+            
+            if not candidate_buckets:
+                continue
+            
+            # 3. Pick a random candidate area and check for a real intersection
+            random.shuffle(candidate_buckets)
+            found_and_split = False
+            
+            for path_list in candidate_buckets[:5]: # Only check a few areas to keep SA fast
+                for p1, p2 in itertools.combinations(path_list, 2):
+                    # Call your existing intersection logic
+                    new_node = neighbor.split_on_intersection(p1, p2)
+                    if new_node:
+                        found_and_split = True
+                        break
+                if found_and_split:
+                    break
+            
+            if not found_and_split:
+                continue
+
+
         elif move_type == "move_node":
             # Move an existing node (only intermediate nodes can move — terminals stay fixed).
             # Small random jitter helps the optimizer "slide" hubs into better positions.
             node_pts = [p for p in neighbor.points if p.mat == material["node"]]
             if node_pts:
                 pt = random.choice(node_pts)
-                dy = random.randint(-3, 3)
-                dx = random.randint(-3, 3)
+                dy = random.randint(-10, 10)
+                dx = random.randint(-10, 10)
                 new_y, new_x = pt.y + dy, pt.x + dx
                 if (0 <= new_y < campus_map.shape[0] and 
                     0 <= new_x < campus_map.shape[1] and
@@ -349,10 +390,18 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
         if not neighbor.is_connected([p for p in neighbor.points if p.mat == material["destination"]]):
             continue
 
+
         # Evaluate the new candidate solution
         new_paved = neighbor.total_paved_length()
         new_travel = neighbor.total_travel_time()
-        new_obj = new_paved + penalty_factor * max(0.0, new_travel - target_travel)
+
+        if new_paved > initial_paved:
+            continue
+
+        paved_ratio = new_paved / initial_paved
+        travel_ratio = new_travel / initial_travel
+
+        new_obj = paved_ratio + weight*travel_ratio
 
         # Metropolis acceptance criterion (the heart of SA — see book §8.6)
         delta = new_obj - current_obj
@@ -367,12 +416,12 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
 
         if accepted:
             # remove any disconnected nodes for this one
-            node_pts = [p for p in current_net.points if p.mat == material["node"]]
-            for pt in node_pts:
-                # count incident paths
-                degree = len(pt._paths)
-                if degree < 2:
-                    best_net.remove_point(pt)
+            # node_pts = [p for p in current_net.points if p.mat == material["node"]]
+            # for pt in node_pts:
+            #     # count incident paths
+            #     degree = len(pt._paths)
+            #     if degree < 2:
+            #         best_net.remove_point(pt)
 
 
             current_net = neighbor
@@ -394,7 +443,7 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
 
         if iter % 500 == 0 and iter > 0:
             print(f"Iter {iter:5d} | Temp {temperature:6.2f} | "
-                  f"Best obj {best_obj:8.1f} | Paved {current_paved:6.1f} | "
+                  f"Best {best_obj:.2f} | Curr {current_obj:.2f} | Paved {current_paved:6.1f} | "
                   f"Travel {current_travel:6.1f}")
 
     print(f"\nSA finished after {iter} iterations.")
@@ -413,12 +462,12 @@ final_net, final_obj, convergence = simulated_annealing_network(
     initial_net, 
     initial_net.terminals,          # destinations only (doors are fixed inside the network)
     campus_map,
-    max_iter=10000,
-    initial_temp=1600.0,
-    cooling_rate=0.99994,
-    target_travel_factor=1.20,      # allow up to 20% travel-time increase
-    penalty_factor=1e3,             # tune this to trade off paving vs. travel. Higher means we want travel over paving
-    kmax=5                          # max number of nearby points a node could possibly connect to
+    max_iter=8000,
+    initial_temp=2000.0,
+    cooling_rate=0.99996,
+    target_travel_factor=1.20,       # allow up to 20% travel-time increase
+    weight = 0.1,                    # how much to emphasize travel time over pavement
+    kmax=3,                          # max number of nearby points a node could possibly connect to
 )
 
 final_paved = final_net.total_paved_length()

@@ -180,7 +180,8 @@ class Path:
 class Network:
     def __init__(self):
         self.points: Set[Point] = set()
-        self.paths: Set[Path] = set()
+        self.paths: Set[Path] = set() 
+        self._points_list: list[Point] = []
         self._dist_cache = {}   # {terminal: {point: distance}}
         self._cache_valid = False
 
@@ -265,6 +266,7 @@ class Network:
         This makes the campus initialization + copy() bullet-proof even if
         a door lands exactly on a previously-created paved node.
         '''
+        self._cache_valid = False
         y = round(y)   # protect against any float drift from splits/moves
         x = round(x)
 
@@ -301,6 +303,7 @@ class Network:
     def remove_point(self, point: Point) -> None:
         '''remove a point from this network'''
         # remove all connected paths first
+        self._cache_valid = False
         for path in list(point._paths):
             self.remove_path(path)
 
@@ -311,6 +314,7 @@ class Network:
         NEW ROBUSTNESS: if p1 or p2 are not already in self.points (e.g. stale points
         from a previous copy), we resolve them by coordinate using determine_point.
         This fixes the exact bug you are seeing after net.copy() + greedy.'''
+        self._cache_valid = False
         # resolve points to THIS network's objects (critical after copy())
         p1 = self.determine_point(p1.y, p1.x)
         p2 = self.determine_point(p2.y, p2.x)
@@ -335,6 +339,7 @@ class Network:
 
     def remove_path(self, path: Path) -> None:
         '''removes one path from the network'''
+        self._cache_valid = False
         path.disconnect()
         self.paths.discard(path)
 
@@ -346,6 +351,7 @@ class Network:
           - Terminals (doors/POIs) are never overwritten (we simply reject the move).
           - This is exactly how professional graph-based optimizers (e.g. road-network or pipe-routing tools) maintain validity.
         '''
+        self._cache_valid = False
         # snap to integer grid (just in case)
         new_y = round(new_y)
         new_x = round(new_x)
@@ -373,6 +379,7 @@ class Network:
 
     def merge_points(self, p1: Point, p2: Point, new_y: int, new_x: int) -> Point:
         '''merges two points, and all their paths, into one new point at new_y, new_x'''
+        self._cache_valid = False
         # create new merged point
         p_new = Point(new_y, new_x)
         self.points.add(p_new)
@@ -458,6 +465,10 @@ class Network:
         self.add_path(mid, p2)
 
         return mid
+    
+    def intersection(self, p1: Path, p2: Path) -> Point | None:
+        return p1.intersection(p2)
+        
     
     def split_on_intersection(self, p1: Path, p2: Path) -> Point | None:
         '''splits an intersection into four segments all connecting to the intersection point'''
@@ -661,22 +672,24 @@ class Network:
     
 
     def build_adjacency(self):
-        """Build adjacency once and reuse."""
-        point_list = list(self.points)
-        self._idx = {p: i for i, p in enumerate(point_list)}
-        self._points_list = point_list
-
-        adj = {i: [] for i in range(len(point_list))}
+        if getattr(self, "_cache_valid", False):
+            return
+        self._points_list = list(self.points)
+        self._idx = {p: i for i, p in enumerate(self._points_list)}
+        self._adj = [[] for _ in range(len(self._points_list))]
+        
         for path in self.paths:
-            if path.mat in (material["paved"], material["interior"]):
-                i = self._idx[path.p1]
-                j = self._idx[path.p2]
-                length = path.length()
-                adj[i].append((j, length))
-                adj[j].append((i, length))
+            if path.p1 not in self._idx or path.p2 not in self._idx:
+                continue
+                    
+            u = self._idx[path.p1]
+            v = self._idx[path.p2]
+            w = path.length()
+            
+            self._adj[u].append((v, w))
+            self._adj[v].append((u, w))
 
-        self._adj = adj
-    
+        self._cache_valid = True
 
     def dijkstra_from(self, start: Point):
         """Compute distances from one terminal (cached)."""
@@ -685,7 +698,7 @@ class Network:
 
         start_idx = self._idx[start]
 
-        dist = {i: float('inf') for i in self._adj}
+        dist = {i: float('inf') for i in range(len(self._adj))}
         dist[start_idx] = 0.0
 
         pq = [(0.0, start_idx)]
@@ -808,6 +821,7 @@ class Network:
         """
         # Step 0: Create a fresh, empty Network instance
         new_net = Network()
+        new_net._cache_valid = False
         
         # =====================================================================
         # 1. ROBUST COPY OF THE CORE GRAPH (points + paths)
