@@ -32,9 +32,9 @@ color_map = {
     2: (0.9, 0.5, 0.3),     # door
     3: (0.1, 0.2, 0.3),     # blocked
     4: (0.6, 0.6, 0.7),     # interior
-    5: (0.5, 0.6, 0.7),      # point of interest (staircase, quad)
-    6: (1,1,1),             # node, connections walkways in open space
-    7: (0, 0, 0)            # destination
+    5: (0.5, 0.6, 0.7),     # point of interest (staircase, quad)
+    6: (1.0, 1.0, 1.0),     # node, connections walkways in open space
+    7: (0.0, 0.0, 0.0)      # destination
 }
 
 # https://www.latlong.net/

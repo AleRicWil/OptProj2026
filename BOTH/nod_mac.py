@@ -181,6 +181,8 @@ class Network:
     def __init__(self):
         self.points: Set[Point] = set()
         self.paths: Set[Path] = set()
+        self._dist_cache = {}   # {terminal: {point: distance}}
+        self._cache_valid = False
 
     def build_map(self, campus_map, buildings_list):
         '''Creates the entire map of campus with all buildings, doors, destinations'''
@@ -642,8 +644,7 @@ class Network:
     def is_connected(self, terminals: List[Point]) -> bool:
         """Check if all terminals are in one connected component (pure graph connectivity)."""
         if not terminals:
-            return True
-        terminals = self.resolve_terminals()
+            terminals = self.resolve_terminals()
         adj, idx, point_list = self.build_distance_dict()
         start = idx[terminals[0]]
         visited = set()
@@ -657,56 +658,74 @@ class Network:
                         stack.append(v)
         term_ids = {idx[t] for t in terminals}
         return term_ids.issubset(visited)
+    
 
+    def build_adjacency(self):
+        """Build adjacency once and reuse."""
+        point_list = list(self.points)
+        self._idx = {p: i for i, p in enumerate(point_list)}
+        self._points_list = point_list
+
+        adj = {i: [] for i in range(len(point_list))}
+        for path in self.paths:
+            if path.mat in (material["paved"], material["interior"]):
+                i = self._idx[path.p1]
+                j = self._idx[path.p2]
+                length = path.length()
+                adj[i].append((j, length))
+                adj[j].append((i, length))
+
+        self._adj = adj
+    
+
+    def dijkstra_from(self, start: Point):
+        """Compute distances from one terminal (cached)."""
+        if not hasattr(self, "_adj"):
+            self.build_adjacency()
+
+        start_idx = self._idx[start]
+
+        dist = {i: float('inf') for i in self._adj}
+        dist[start_idx] = 0.0
+
+        pq = [(0.0, start_idx)]
+
+        while pq:
+            d, u = heapq.heappop(pq)
+            if d > dist[u]:
+                continue
+            for v, w in self._adj[u]:
+                alt = d + w
+                if alt < dist[v]:
+                    dist[v] = alt
+                    heapq.heappush(pq, (alt, v))
+
+        # convert back to Point-keyed dict
+        return {self._points_list[i]: dist[i] for i in dist}
+
+    # faster version of djikstra's algorithm
     def total_travel_time(self) -> float:
-        """NEW objective: sum of shortest-path distances between EVERY pair of DESTINATIONS.
-        Uses hybrid graph = paved exterior paths + fixed interior door-to-destination edges.
-        Doors are no longer terminals. This is exactly what your SA optimizer will minimize."""
-        # ---------------------------------------------------------------------
-        # 2. CRITICAL SAFETY: Resolve stale terminal references
-        #    (After Network.copy() or neighbor moves, Python object identities
-        #     can become invalid. resolve_terminals() rebuilds the list using
-        #     coordinate lookup — this is the standard fix in graph-based
-        #     discrete optimizers.)
-        # ---------------------------------------------------------------------
-        self.resolve_terminals()          # updates self.terminals in place
-        destinations = self.terminals     # now guaranteed to be live objects
+        self.resolve_terminals()
+        destinations = self.terminals
+        if len(destinations) < 2: return 0.0
 
-        if not destinations or len(destinations) < 2:
-            return 0.0
-
-        # ---------------------------------------------------------------------
-        # 3. Fast connectivity check (pure graph traversal, no distances needed)
-        #    If any terminal is unreachable, the whole solution is invalid.
-        # ---------------------------------------------------------------------
-        # if not self.is_connected(destinations):
-        #     return 1e9   # massive penalty — tells SA "this is bad"
-
-        # ---------------------------------------------------------------------
-        # 4. Use pre-computed unique_pairs when available (set in build_map())
-        #    This avoids recomputing itertools.combinations on every call.
-        # ---------------------------------------------------------------------
-        if hasattr(self, 'unique_pairs') and self.unique_pairs:
-            pairs = self.unique_pairs
-        else:
-            pairs = list(itertools.combinations(destinations, 2))
-
-        # ---------------------------------------------------------------------
-        # 5. Sum shortest-path distances for every unique pair
-        #    This is exactly the "find the shortest route for each destination
-        #    pair" behavior you asked for.
-        # ---------------------------------------------------------------------
+        # Use the one-to-all Dijkstra we already have in the cache logic
+        # instead of calling get_shortest_route (which is one-to-one)
         total_travel = 0.0
-        for start, goal in pairs:
-            # Delegate to the shared helper — reuses the identical Dijkstra
-            # implementation + predecessor reconstruction logic you already
-            # trust in get_shortest_route().
-            _, distance = self.get_shortest_route(start, goal)
-
-            if distance == float('inf') or distance >= 1e9:
-                return 1e9   # any disconnected pair makes the whole network invalid
-
-            total_travel += distance
+        
+        # We only run Dijkstra once for each 'source' terminal
+        for i, start_node in enumerate(destinations):
+            # This should return a dictionary of {Point: distance}
+            distances_from_start = self.dijkstra_from(start_node)
+            
+            # Only sum distances to the REMAINING terminals to avoid double counting
+            for j in range(i + 1, len(destinations)):
+                target_node = destinations[j]
+                d = distances_from_start.get(target_node, float('inf'))
+                
+                if d >= 1e9: 
+                    return 1e9
+                total_travel += d
 
         return total_travel
 

@@ -265,7 +265,14 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
         if move_type == "add_node" and open_locations:
             # Add a brand-new Steiner node (hub) at a random open campus location.
             # This is how we introduce extra connection points that can reduce total paving.
+
+            # identify crossing lines stochastically, so we're not too expensive
+                # pick four paths in neighbor
+                    # if any of them cross each other, use Path.intersection(p1, p2) to identify a good point for a node
+                        # use that point instead of random y, x
+            
             y, x = random.choice(open_locations)
+
             new_node = neighbor.add_point(y, x, material["node"])
 
             # find local candidates
@@ -315,7 +322,8 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
         elif move_type == "add_path":
             # Occasionally add a new paved connection (useful early when temperature is high).
             # We only add if it does NOT cross any building.
-            pts = [p for p in neighbor.points if p.mat in (material["door"], material["poi"], material["node"], material["destination"])]
+            potentials = (material["door"], material["poi"], material["node"], material["destination"])
+            pts = [p for p in neighbor.points if p.mat in potentials]
             for _ in range(12):   # limited random trials for efficiency
                 p1 = random.choice(pts)
                 p2 = random.choice(pts)
@@ -332,21 +340,19 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
                 path = random.choice(paved_paths)
                 neighbor.remove_path(path)
 
-
         # After any move, reject the neighbor immediately if it violates space constraints
         if not neighbor.is_valid_space(campus_map):
             # may want to redo this to backtrack one step rather than progress and diminish temperature
             continue
 
+        # reject immediately if no longer connected
+        if not neighbor.is_connected([p for p in neighbor.points if p.mat == material["destination"]]):
+            continue
+
         # Evaluate the new candidate solution
         new_paved = neighbor.total_paved_length()
         new_travel = neighbor.total_travel_time()
-
-        # Huge penalty if the network becomes disconnected (travel blows up)
-        if new_travel > 1e8:
-            new_obj = 1e12
-        else:
-            new_obj = new_paved + penalty_factor * max(0.0, new_travel - target_travel)
+        new_obj = new_paved + penalty_factor * max(0.0, new_travel - target_travel)
 
         # Metropolis acceptance criterion (the heart of SA — see book §8.6)
         delta = new_obj - current_obj
@@ -360,6 +366,15 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
                 worse_accepted += 1
 
         if accepted:
+            # remove any disconnected nodes for this one
+            node_pts = [p for p in current_net.points if p.mat == material["node"]]
+            for pt in node_pts:
+                # count incident paths
+                degree = len(pt._paths)
+                if degree < 2:
+                    best_net.remove_point(pt)
+
+
             current_net = neighbor
             current_obj = new_obj
             current_paved = new_paved
@@ -382,14 +397,6 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
                   f"Best obj {best_obj:8.1f} | Paved {current_paved:6.1f} | "
                   f"Travel {current_travel:6.1f}")
 
-    # remove any disconnected nodes before the end
-    node_pts = [p for p in best_net.points if p.mat == material["node"]]
-    for pt in node_pts:
-        # count incident paths
-        degree = len(pt._paths)
-        if degree == 0:
-            best_net.remove_point(pt)
-
     print(f"\nSA finished after {iter} iterations.")
     print(f"Final objective: {best_obj:.1f}")
     print(f"Worse moves accepted: {worse_accepted}  ← this is the SA magic that finds good hubs!")
@@ -410,7 +417,7 @@ final_net, final_obj, convergence = simulated_annealing_network(
     initial_temp=1600.0,
     cooling_rate=0.99994,
     target_travel_factor=1.20,      # allow up to 20% travel-time increase
-    penalty_factor=380.0,           # tune this to trade off paving vs. travel
+    penalty_factor=1e3,             # tune this to trade off paving vs. travel. Higher means we want travel over paving
     kmax=5                          # max number of nearby points a node could possibly connect to
 )
 
