@@ -380,10 +380,13 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
             current_paved = new_paved
             current_travel = new_travel
 
+            
+
         # Update best solution found so far
         if current_obj < best_obj:
             best_net = current_net.copy()
             best_obj = current_obj
+            neighbor.plot_network(campus_map, save_flag=True, idx=iter)
 
         history.append(best_obj)
 
