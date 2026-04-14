@@ -516,7 +516,7 @@ class Network:
     def __repr__(self) -> str:
         return f"Network(points={len(self.points)}, paths={len(self.paths)})"
     
-    def plot_network(self, campus_map) -> None:
+    def plot_network(self, campus_map, save_flag=False, idx=0) -> None:
         fig, ax = plt.subplots(figsize=(12, 9), dpi=90)
         plt.subplots_adjust(bottom=0.18)
 
@@ -562,6 +562,13 @@ class Network:
                     "Green = paved walkways • Gray dashed = interior access",
                     fontsize=14, fontweight='bold', pad=20)
         ax.legend(loc='upper right')
+        
+        if save_flag:
+            plt.savefig(f"network_result_{idx}.png", 
+                dpi=300, 
+                bbox_inches='tight', 
+                facecolor='white')
+            
         plt.show()
 
         # ---------------------------------------------------------------------
