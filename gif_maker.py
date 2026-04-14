@@ -93,7 +93,7 @@ def create_walkway_evolution_gif(image_folder: str,
 if __name__ == "__main__":
     # CHANGE THESE SETTINGS TO MATCH YOUR PROJECT:
     
-    IMAGE_FOLDER = r"C:\Users\Alex R. Williams\Documents\School\Optimization\Project\Images"          # Folder containing your PNG frames
+    IMAGE_FOLDER = r"GIF"          # Folder containing your PNG frames
     
     create_walkway_evolution_gif(
         image_folder=IMAGE_FOLDER,

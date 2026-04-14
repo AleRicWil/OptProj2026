@@ -264,7 +264,7 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
 
         # Choose one discrete move (the five moves that let SA explore the design space)
         move_types = ["add_node", "remove_node", "move_node", "add_path", "remove_path", "break_intersection", "drop_orphans"]
-        move_weights = [0.2,           0.3,          0.5,         0.1,        0.3,              0.003,              0.05] 
+        move_weights = [0.2,           0.6,          0.5,         0.1,        0.6,              0.005,              0.05] 
 
         # Inside your SA loop:
         move_type = random.choices(move_types, weights=move_weights, k=1)[0]
@@ -282,9 +282,8 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
             
             # sort based on distance, and pick local-ish points
             candidates.sort(key=lambda p: (p.y - y)**2 + (p.x - x)**2)
-            k = random.randint(2, kmax)
-            pool = candidates[:min(len(candidates), k * 3)]
-            selected = random.sample(pool, min(len(pool), k))
+            pool = candidates[:min(len(candidates), kmax)]
+            selected = random.sample(pool, min(len(pool), kmax))
 
             # make connections as found
             connections_made = 0
@@ -317,6 +316,7 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
             node_pts = [p for p in neighbor.points if p.mat == material["node"]]
             if node_pts:
                 pt = random.choice(node_pts)
+                
                 neighbor.remove_point(pt)   # nod_mac.py automatically cleans up incident paths
 
         elif move_type == "add_path":
@@ -436,6 +436,7 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
         if current_obj < best_obj:
             best_net = current_net.copy()
             best_obj = current_obj
+            best_net.plot_network(campus_map)
 
         history.append(best_obj)
 
@@ -466,8 +467,8 @@ final_net, final_obj, convergence = simulated_annealing_network(
     initial_net.terminals,          # destinations only (doors are fixed inside the network)
     campus_map,
     max_iter=3000,
-    initial_temp=2000.0,
-    cooling_rate=0.9992,
+    initial_temp=1700.0,
+    cooling_rate=0.9996,
     target_travel_factor=1.00,      # allow up to 20% travel-time increase
     penalty_factor=200,            # tune this to trade off paving vs. travel
     kmax=5                          # max number of nearby points a node could possibly connect to
