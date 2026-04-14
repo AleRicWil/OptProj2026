@@ -377,12 +377,17 @@ class Network:
             # merge_points already exists and does all the rewiring
             self.merge_points(point, target, new_y, new_x)
 
+
+    def clean_stale_paths(self):
+        for path in list(self.paths):
+            if path.p1 not in self.points or path.p2 not in self.points:
+                self.remove_path(path)
+
     def merge_points(self, p1: Point, p2: Point, new_y: int, new_x: int) -> Point:
         '''merges two points, and all their paths, into one new point at new_y, new_x'''
         self._cache_valid = False
         # create new merged point
-        p_new = Point(new_y, new_x)
-        self.points.add(p_new)
+        p_new = self.add_point(new_y, new_x)
 
         # collect all paths from both points
         all_paths = set(p1._paths) | set(p2._paths)
@@ -885,13 +890,6 @@ class Network:
             new_net.terminals = [
                 point_map.get(p, new_net.determine_point(round(p.y), round(p.x)))
                 for p in self.terminals
-            ]
-        
-        if hasattr(self, 'unique_pairs'):
-            # unique_pairs = list of (Point, Point) tuples for all-pairs combinations
-            new_net.unique_pairs = [
-                (point_map[p1], point_map[p2])
-                for p1, p2 in self.unique_pairs
             ]
         
         if hasattr(self, 'interior_count'):
