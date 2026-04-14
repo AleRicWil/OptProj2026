@@ -61,7 +61,7 @@ def place_polygon_pois(grid, num_points, seed=None):
         c = int(round(center_c + radius * math.cos(angle)))
         r = max(3, min(rows - 4, r))
         c = max(3, min(cols - 4, c))
-        grid[r, c] = material["node"]
+        grid[r, c] = material["poi"]
         poi_locations.append((r, c))
     return grid, poi_locations
 
@@ -88,7 +88,7 @@ def place_random_paved(grid, num_paved, seed=None):
 def is_walkable(grid, r, c):
     rows, cols = grid.shape
     if 0 <= r < rows and 0 <= c < cols:
-        return grid[r, c] in (material["paved"], material["poi"], material["door"], material["node"])
+        return grid[r, c] in (material["paved"], material["poi"])
     return False
 
 def get_neighbors_with_cost(grid, r, c):
