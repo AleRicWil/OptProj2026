@@ -263,7 +263,11 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
         neighbor = current_net.copy()
 
         # Choose one discrete move (the five moves that let SA explore the design space)
-        move_type = random.choice(["add_node", "remove_node", "move_node", "add_path", "remove_path"])
+        move_types = ["add_node", "remove_node", "move_node", "add_path", "remove_path", "break_intersection", "drop_orphans"]
+        move_weights = [0.2,           0.3,          0.5,         0.1,        0.3,              0.003,              0.05] 
+
+        # Inside your SA loop:
+        move_type = random.choices(move_types, weights=move_weights, k=1)[0]
 
         if move_type == "add_node" and open_locations:
             # Add a brand-new Steiner node (hub) at a random open campus location.
@@ -334,7 +338,7 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
             if paved_paths:
                 path = random.choice(paved_paths)
                 neighbor.remove_path(path)
-                
+
         elif move_type == "break_intersection":
             grid_size = 40
             buckets = collections.defaultdict(list)
@@ -377,6 +381,15 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
             if not found_and_split:
                 continue
 
+        elif move_type == "drop_orphans":
+                # remove any disconnected nodes before the end
+                node_pts = [p for p in best_net.points if p.mat == material["node"]]
+                for pt in node_pts:
+                    # count incident paths
+                    degree = len(pt._paths)
+                    if degree <= 1:
+                        best_net.remove_point(pt)
+
 
         # After any move, reject the neighbor immediately if it violates space constraints
         if not neighbor.is_valid_space(campus_map):
@@ -405,6 +418,15 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
                 worse_accepted += 1
 
         if accepted:
+
+            # remove any disconnected nodes before the end
+            node_pts = [p for p in best_net.points if p.mat == material["node"]]
+            for pt in node_pts:
+                # count incident paths
+                degree = len(pt._paths)
+                if degree <= 1:
+                    best_net.remove_point(pt)
+
             current_net = neighbor
             current_obj = new_obj
             current_paved = new_paved
@@ -422,18 +444,10 @@ def simulated_annealing_network(initial_net: Network, terminals: list[Point], ca
         if temperature < 0.01:
             break
 
-        if iter % 500 == 0 and iter > 0:
+        if iter % 500 == 0:
             print(f"Iter {iter:5d} | Temp {temperature:6.2f} | "
                   f"Best {best_obj:8.1f} | Curr {current_obj:8.1f} | Paved {current_paved:6.1f} | "
                   f"Travel {current_travel:6.1f}")
-
-    # remove any disconnected nodes before the end
-    node_pts = [p for p in best_net.points if p.mat == material["node"]]
-    for pt in node_pts:
-        # count incident paths
-        degree = len(pt._paths)
-        if degree == 0:
-            best_net.remove_point(pt)
 
     print(f"\nSA finished after {iter} iterations.")
     print(f"Final objective: {best_obj:.1f}")
@@ -451,11 +465,11 @@ final_net, final_obj, convergence = simulated_annealing_network(
     initial_net, 
     initial_net.terminals,          # destinations only (doors are fixed inside the network)
     campus_map,
-    max_iter=10000,
-    initial_temp=1600.0,
-    cooling_rate=0.99994,
-    target_travel_factor=1.20,      # allow up to 20% travel-time increase
-    penalty_factor=380.0,           # tune this to trade off paving vs. travel
+    max_iter=3000,
+    initial_temp=2000.0,
+    cooling_rate=0.9992,
+    target_travel_factor=1.00,      # allow up to 20% travel-time increase
+    penalty_factor=200,            # tune this to trade off paving vs. travel
     kmax=5                          # max number of nearby points a node could possibly connect to
 )
 
