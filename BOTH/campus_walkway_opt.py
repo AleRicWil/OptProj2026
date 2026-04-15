@@ -41,7 +41,7 @@ campus_map, buildings_list = campus(
 base_net = Network()
 
 base_net.build_map(campus_map, buildings_list)
-print(f"Network initialized with {len(base_net.points)} constructing points "
+print(f"Network initialized with {len(base_net.points.values())} constructing points "
       f"({len(buildings_list)} buildings + {len(base_net.door_coords)} doors + {len(base_net.dest_coords)} destinations)")
 
 base_net.connect_interiors(GRID_RES, campus_map)
@@ -189,7 +189,7 @@ print(f"Initial total travel time: {initial_travel:.1f}")
 # ----------------------------------------------------------------------------- 
 # STEP 4: NEW Simulated Annealing (dense-initial pruning + Steiner-node hubs)
 # ----------------------------------------------------------------------------- 
-def simulated_annealing_network(initial_net: Network, campus_map, initial_temp=1800.0, cooling_rate=0.99993,
+def simulated_annealing_network(initial_net: Network, campus_map, max_iter=8000, initial_temp=1800.0, cooling_rate=0.99993,
                                 target_travel_factor=1.10, penalty_factor=380.0, kmax=3):
     """NEW Simulated Annealing tailored for the dense-initial walkway network.
     
@@ -248,16 +248,17 @@ def simulated_annealing_network(initial_net: Network, campus_map, initial_temp=1
     history = [best_obj]
     worse_accepted = 0
 
-    print("\n=== Starting Simulated Annealing (dense → pruned network) ===")
+    print("\n=== Starting Simulated Annealing ===")
     print(f"Initial paved length : {current_paved:.1f} units")
-    print(f"Initial total travel time : {current_travel:.1f} units")
-    print(f"Target travel time (allowed) : {target_travel:.1f} ({target_travel_factor-1:.0%} increase)")
-    print(f"Initial temperature : {temperature:.0f} | Objective : {current_obj:.1f}\n")
-    iter = 0
+    print(f"Initial total travel : {current_travel:.1f} units")
+    print(f"Target travel time   : {target_travel:.1f} ({target_travel_factor-1:.0%} increase)")
+    print(f"Initial temperature  : {temperature:.0f} | Objective : {current_obj:.1f}")
+    i = 0
 
     while True:
         # Generate a neighbor by copying the current network
         neighbor = current_net.copy()
+        neighbor.resolve_terminals()
 
         # Choose one discrete move (the five moves that let SA explore the design space)
         move_types = ["add_node", "remove_node", "move_node", "add_path", "remove_path", "break_intersection", "drop_orphans"]
@@ -270,10 +271,11 @@ def simulated_annealing_network(initial_net: Network, campus_map, initial_temp=1
             # Add a brand-new Steiner node (hub) at a random open campus location.
             # This is how we introduce extra connection points that can reduce total paving.
             y, x = random.choice(open_locations)
-            new_node = neighbor.add_point(y, x, material["node"])
+            new_node = neighbor.determine_point(y, x)
+            new_node.mat = material["node"]
 
             # find local candidates
-            candidates = [p for p in neighbor.points if (p is not new_node and (p.mat != material["blocked"]))]
+            candidates = [p for p in neighbor.points.values() if (p is not new_node and (p.mat != material["blocked"]))]
             if not candidates:
                 continue
             
@@ -296,21 +298,23 @@ def simulated_annealing_network(initial_net: Network, campus_map, initial_temp=1
         elif move_type == "move_node":
             # Move an existing node (only intermediate nodes can move — terminals stay fixed).
             # Small random jitter helps the optimizer "slide" hubs into better positions.
-            node_pts = [p for p in neighbor.points if p.mat == material["node"]]
+            node_pts = [p for p in neighbor.points.values() if p.mat == material["node"]]
             if node_pts:
                 pt = random.choice(node_pts)
                 dy = random.randint(-1, 1)
                 dx = random.randint(-1, 1)
                 new_y, new_x = pt.y + dy, pt.x + dx
                 if (0 <= new_y < campus_map.shape[0] and 
-                    0 <= new_x < campus_map.shape[1] and
-                    campus_map[new_y, new_x] not in (material["blocked"], material["interior"])):
+                    0 <= new_x < campus_map.shape[1]):
+                    target = neighbor.get_point(new_y, new_x)
+                    if target and target.mat in (material["door"], material["destination"]):
+                        continue
                     neighbor.move_point(pt, new_y, new_x)
 
         elif move_type == "remove_node":
             # Remove an intermediate node (and all its paved paths).
             # This is the opposite of add_node and lets SA aggressively prune useless hubs.
-            node_pts = [p for p in neighbor.points if p.mat == material["node"]]
+            node_pts = [p for p in neighbor.points.values() if p.mat == material["node"]]
             if node_pts:
                 pt = random.choice(node_pts)
                 
@@ -319,7 +323,7 @@ def simulated_annealing_network(initial_net: Network, campus_map, initial_temp=1
         elif move_type == "add_path":
             # Occasionally add a new paved connection (useful early when temperature is high).
             # We only add if it does NOT cross any building.
-            pts = [p for p in neighbor.points if p.mat in (material["door"], material["poi"], material["node"], material["destination"])]
+            pts = [p for p in neighbor.points.values() if p.mat in (material["door"], material["poi"], material["node"], material["destination"])]
             for _ in range(12):   # limited random trials for efficiency
                 p1 = random.choice(pts)
                 p2 = random.choice(pts)
@@ -380,7 +384,7 @@ def simulated_annealing_network(initial_net: Network, campus_map, initial_temp=1
 
         elif move_type == "drop_orphans":
                 # remove any disconnected nodes before the end
-                node_pts = [p for p in neighbor.points if p.mat == material["node"]]
+                node_pts = [p for p in neighbor.points.values() if p.mat == material["node"]]
                 for pt in node_pts:
                     # count incident paths
                     degree = len(pt._paths)
@@ -396,6 +400,10 @@ def simulated_annealing_network(initial_net: Network, campus_map, initial_temp=1
 
         if not neighbor.validate_graph():
             continue
+
+        # debugging
+        assert neighbor.check_duplicate_points(), "Duplicate points detected!"
+        assert neighbor.validate_graph(), "Graph corrupted after move!"
 
         # Evaluate the new candidate solution
         new_paved = neighbor.total_paved_length()
@@ -420,15 +428,16 @@ def simulated_annealing_network(initial_net: Network, campus_map, initial_temp=1
 
         if accepted:
             # remove any disconnected nodes before the end
-            node_pts = [p for p in best_net.points if p.mat == material["node"]]
+            node_pts = [p for p in neighbor.points.values() if p.mat == material["node"]]
             for pt in node_pts:
                 # count incident paths
                 degree = len(pt._paths)
                 if degree <= 1:
-                    best_net.remove_point(pt)
+                    neighbor.remove_point(pt)
             neighbor.clean_stale_paths()
 
             current_net = neighbor
+            current_net.resolve_terminals()
             current_obj = new_obj
             current_paved = new_paved
             current_travel = new_travel
@@ -441,9 +450,10 @@ def simulated_annealing_network(initial_net: Network, campus_map, initial_temp=1
             # crank up the heat when things are going well
             # temperature *= 1.3
 
-            # print(f"Iter {iter:5d} | Temp {temperature:6.2f} | "
-            #     f"Best {best_obj:8.1f} | Curr {current_obj:8.1f} | Paved {current_paved:6.1f} | "
-            #     f"Travel {current_travel:6.1f}")
+        if i % 100 == 0:
+            print(f"Iter {i:5d} | Temp {temperature:6.2f} | "
+                f"Best {best_obj:8.1f} | Curr {current_obj:8.1f} | Paved {current_paved:6.1f} | "
+                f"Travel {current_travel:6.1f}", end='\r')
 
         history.append(best_obj)
 
@@ -451,8 +461,10 @@ def simulated_annealing_network(initial_net: Network, campus_map, initial_temp=1
         temperature *= cooling_rate
         if temperature < 10.0:
             break
-        iter += 1
+        i += 1
 
+        if i > max_iter:
+            break
     return best_net, best_obj, history
 
 
@@ -466,6 +478,7 @@ def run(penalty_factor):
     final_net, final_obj, convergence = simulated_annealing_network(
         initial_net, 
         campus_map,
+        max_iter=8000,
         initial_temp=1700.0,
         cooling_rate=0.9997,
         target_travel_factor=1.10,      # allow up to 10% travel-time increase
@@ -490,8 +503,8 @@ def run(penalty_factor):
 
 pavements = []
 travels = []
-for i in range (30):
-    fp, ft = run(i*30)
+for i in range (20):
+    fp, ft = run(i*100)
     pavements.append(fp)
     travels.append(ft)
 

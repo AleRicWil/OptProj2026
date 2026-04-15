@@ -179,7 +179,7 @@ class Path:
 
 class Network:
     def __init__(self):
-        self.points: Set[Point] = set()
+        self.points: dict[tuple[int, int], Point] = {}
         self.paths: Set[Path] = set() 
         self._points_list: list[Point] = []
         self._dist_cache = {}   # {terminal: {point: distance}}
@@ -261,38 +261,27 @@ class Network:
                         self.interior_count += 1
 
     def add_point(self, y: int, x: int, mat: int = material["paved"]) -> Point:
-        '''Add (or return existing) point at (y, x).
-        ENHANCED: now allows safe material upgrades (paved → door/poi).
-        This makes the campus initialization + copy() bullet-proof even if
-        a door lands exactly on a previously-created paved node.
-        '''
         self._cache_valid = False
-        y = round(y)   # protect against any float drift from splits/moves
-        x = round(x)
+        y, x = round(y), round(x)
+        key = (y, x)
 
-        existing = self.get_point(y, x)
+        existing = self.points.get(key)
+
         if existing:
-            # === MATERIAL CONFLICT HANDLING (this fixes your exact error) ===
             if existing.mat != mat:
-                # Allow upgrade: paved -> door or poi (common in campus setup)
-                if ((existing.mat == material["paved"] or existing.mat == material['blocked']) and 
-                    mat in (material["door"], material["destination"])):
-                    existing.mat = mat   # upgrade the material in-place
-                    return existing
-                elif existing.mat == material["paved"] and mat in [material['node']]:
+                if ((existing.mat in (material["paved"], material["blocked"], material["node"]))
+                    and mat in (material["door"], material["destination"])):
+                    # door and destination take priority over paved, blocked, and node
                     existing.mat = mat
-                    return existing                                                    
-                else:
-                    # true conflict (should never happen after the move_point fix)
-                    raise ValueError(
-                        f"Material conflict at ({y}, {x}): "
-                        f"existing={existing.mat} (mat={existing.mat}), new={mat}"
-                    )
+                elif existing.mat == material["paved"] and mat == material["node"]:
+                    # node takes priority over paved
+                    existing.mat = mat
+                # otherwise: KEEP existing (do NOT throw)
             return existing
 
-        # brand new point
+        # --- CREATE NEW ---
         p = Point(y, x, mat)
-        self.points.add(p)
+        self.points[key] = p
         return p
     
     def add_points(self, points: list[Point], mat: int):
@@ -302,12 +291,14 @@ class Network:
 
     def remove_point(self, point: Point) -> None:
         '''remove a point from this network'''
-        # remove all connected paths first
         self._cache_valid = False
+
         for path in list(point._paths):
             self.remove_path(path)
 
-        self.points.discard(point)
+        key = (point.y, point.x)
+        if key in self.points:
+            del self.points[key]
 
     def add_path(self, p1: Point, p2: Point, mat: int = material["paved"]) -> Path | None:
         '''add a path between two points in this network.
@@ -352,88 +343,89 @@ class Network:
           - This is exactly how professional graph-based optimizers (e.g. road-network or pipe-routing tools) maintain validity.
         '''
         self._cache_valid = False
-        # snap to integer grid (just in case)
+
         new_y = round(new_y)
         new_x = round(new_x)
 
-        # safety bounds check already done in the SA loop, but keep it here too
-        if not (0 <= new_y < 300 and 0 <= new_x < 300):  # campus_map size is ~300x250
-            return
+        old_key = (point.y, point.x)
+        new_key = (new_y, new_x)
 
         target = self.get_point(new_y, new_x)
 
         if target is None:
-            # free space → just move
+            # --- FIX: update dict ---
+            if old_key in self.points:
+                del self.points[old_key]
+
             point.move(new_y, new_x)
+            self.points[new_key] = point
+
         elif target is point:
-            # no-op, already there
             return
-        elif target.mat in (material["door"], material["poi"]):
-            # never overwrite a terminal — reject this neighbor move silently
-            # (this is the safe, teaching-friendly choice for your project)
+
+        elif target.mat in (material["door"], material["poi"], material["destination"]):
             return
+
         else:
-            # two paved nodes collided → merge them (keeps connectivity)
-            # merge_points already exists and does all the rewiring
             self.merge_points(point, target, new_y, new_x)
 
 
     def clean_stale_paths(self):
-        for path in list(self.paths):
-            if path.p1 not in self.points or path.p2 not in self.points:
-                self.remove_path(path)
+            for path in list(self.paths):
+                p1_valid = self.points.get((path.p1.y, path.p1.x)) is path.p1
+                p2_valid = self.points.get((path.p2.y, path.p2.x)) is path.p2
+                
+                if not p1_valid or not p2_valid:
+                    self.remove_path(path)
+
+    def check_duplicate_points(self):
+        seen = {}
+        for p in self.points.values():
+            key = (p.y, p.x)
+            if key in seen:
+                print(f"DUPLICATE POINTS at {key}: {seen[key]} and {p}")
+                return False
+            seen[key] = p
+        return True
 
     def merge_points(self, p1: Point, p2: Point, new_y: int, new_x: int) -> Point:
         '''merges two points, and all their paths, into one new point at new_y, new_x'''
         self._cache_valid = False
-        # create new merged point
-        p_new = self.add_point(new_y, new_x)
 
-        # collect all paths from both points
+        # Prevent merging into protected nodes
+        existing = self.get_point(new_y, new_x)
+        if existing and existing.mat in (material["door"], material["destination"]):
+            return existing
+
+        p_new = self.determine_point(new_y, new_x)
+
         all_paths = set(p1._paths) | set(p2._paths)
 
-        # remove old direct connection between p1 and p2 (if exists)
-        for path in list(all_paths):
-            if (path.p1 is p1 and path.p2 is p2) or (path.p1 is p2 and path.p2 is p1):
-                self.remove_path(path)
-                all_paths.discard(path)
-
-        # helper: avoid duplicate connections
-        def already_connected(a: Point, b: Point) -> bool:
-            return any(
-                (p.p1 is a and p.p2 is b) or (p.p1 is b and p.p2 is a)
-                for p in p_new._paths
-            )
-
-        # rewire remaining paths
         for path in list(all_paths):
             other = path.p2 if path.p1 in (p1, p2) else path.p1
-
-            # remove old path
             self.remove_path(path)
 
-            # add path to new point, and avoid duplicate edges
-            if not already_connected(p_new, other):
+            if (other.y, other.x) not in self.points:
+                continue
+
+            if other is not p_new:
                 self.add_path(p_new, other)
 
         # remove old points
-        self.points.discard(p1)
-        self.points.discard(p2)
+        self.remove_point(p1)
+        self.remove_point(p2)
 
         return p_new
     
     def get_point(self, y: int, x: int) -> Point | None:
         '''checks if a point already exists at some specific coordinates'''
-        for p in self.points:
-            if p.y == y and p.x == x:
-                return p
-        return None
+        return self.points.get((y, x))
     
     def determine_point(self, y: int, x: int) -> Point:
         '''checks if a point exists at a location, and either returns it or adds one there'''
-        existing = self.get_point(y, x)
-        if existing is not None:
-            return existing
+        p = self.get_point(y, x)
+        if p:
+            return p
         return self.add_point(y, x)
     
     def get_path(self, p1: Point, p2: Point) -> Path | None:
@@ -641,13 +633,13 @@ class Network:
         return sum(p.length() for p in self.paths if p.mat == material["paved"])
 
     def get_terminal_points(self, terminals: List[Point]) -> List[Point]:
-        """Return only the points we must connect (doors + POIs)."""
-        return [p for p in terminals if p in self.points]
+            """Return only the points we must connect (doors + POIs)."""
+            return [p for p in terminals if self.points.get((p.y, p.x)) is p]
 
     def build_distance_dict(self) -> tuple:
         """Build adjacency dict for Dijkstra. NOW INCLUDES interior paths for building-internal travel.
         Paved = decision variables (cost we minimize). Interior = fixed (zero paving cost)."""
-        point_list = list(self.points)
+        point_list = list(self.points.values())
         idx = {p: i for i, p in enumerate(point_list)}
         
         adj = {i: [] for i in range(len(point_list))}
@@ -686,7 +678,7 @@ class Network:
     def build_adjacency(self):
         if getattr(self, "_cache_valid", False):
             return
-        self._points_list = list(self.points)
+        self._points_list = list(self.points.values())
         self._idx = {p: i for i, p in enumerate(self._points_list)}
         self._adj = [[] for _ in range(len(self._points_list))]
         
@@ -810,43 +802,24 @@ class Network:
         return True
 
     def validate_graph(self) -> bool:
-        """Quick graph sanity check — call during development to catch stale references early."""
-        for path in list(self.paths):
-            if path.p1 not in self.points or path.p2 not in self.points:
-                print(f"WARNING: Stale reference in Path {path}")
-                return False
-        return True
+            for path in list(self.paths):
+                # Verify the exact Point objects exist at those coordinates
+                p1_valid = self.points.get((path.p1.y, path.p1.x)) is path.p1
+                p2_valid = self.points.get((path.p2.y, path.p2.x)) is path.p2
+                
+                if not p1_valid or not p2_valid:
+                    print(f"WARNING: Stale reference in Path {path}")
+                    return False
+            return True
 
     def copy(self) -> Network:
-        """Deep copy of the entire network — ROBUST version for SA neighbor trials.
-        
-        CRITICAL TEACHING POINT: 
-        The original copy() assumed perfect graph consistency (every Path endpoint
-        is always in self.points). In practice, merge_points, split_path, and
-        move_point can temporarily leave "stale" Point references in Paths.
-        This version uses coordinates as the source of truth and includes a
-        coordinate fallback. This is exactly how professional discrete
-        optimization tools (campus planning, VLSI routing, pipe networks) stay stable.
-        
-        This fix lets the SA loop run to completion (80 000+ iterations) without
-        crashing even when neighbor moves temporarily violate the invariant.
-        """
-        # Step 0: Create a fresh, empty Network instance
         new_net = Network()
         new_net._cache_valid = False
-        
-        # =====================================================================
-        # 1. ROBUST COPY OF THE CORE GRAPH (points + paths)
-        # =====================================================================
-        # We use coordinates as the single source of truth (same technique
-        # that fixed the earlier KeyError bug). This guarantees that even if
-        # merge_points() or move_point() left temporary stale references,
-        # the copy remains perfectly consistent.
         
         point_map: dict[Point, Point] = {}
         
         # Copy every live Point using its (y, x, mat) triple
-        for p in list(self.points):          # list() protects against mutation
+        for p in self.points.values():          # list() protects against mutation
             new_p = new_net.add_point(p.y, p.x, p.mat)
             point_map[p] = new_p
         
@@ -866,15 +839,7 @@ class Network:
             new_p1 = point_map.get(p1, new_net.determine_point(round(p1.y), round(p1.x)))
             new_p2 = point_map.get(p2, new_net.determine_point(round(p2.y), round(p2.x)))
             new_net.add_path(new_p1, new_p2, path.mat)
-        
-        # =====================================================================
-        # 2. COPY ALL AUXILIARY ATTRIBUTES (the part you asked to add)
-        # =====================================================================
-        # These were set by build_map() and connect_interiors().
-        # We carry them over and remap any Point references so that
-        # total_travel_time(), is_connected(), resolve_terminals(), etc.
-        # work perfectly on the copy.
-        
+
         if hasattr(self, 'door_coords'):
             new_net.door_coords = list(self.door_coords)          # immutable tuples → safe shallow copy
         
@@ -895,27 +860,12 @@ class Network:
         if hasattr(self, 'interior_count'):
             new_net.interior_count = self.interior_count   # integer – direct copy
         
-        # =====================================================================
-        # 3. Return the fully-functional independent clone
-        # =====================================================================
         return new_net
 
     def resolve_terminals(self) -> list[Point]:
-        """CRITICAL SAFETY METHOD for any routine that uses Network.copy()
-        
-        After .copy() (or any graph reconstruction) the Point objects in the
-        'terminals' list become stale (different Python objects, same coordinates).
-        This method rebuilds the list using coordinate lookup so that
-        is_connected(), total_travel_time(), and any future SA moves always
-        see the correct Point instances that actually live in THIS network.
-        
-        This is the standard pattern in graph-based discrete optimization
-        (think Steiner-tree or TSP with intermediate nodes). It eliminates
-        the KeyError forever.
-        """
         # Fast lookup: (y, x) -> live Point object in this network
         coord_map: dict[tuple[int, int], Point] = {}
-        for p in self.points:
+        for p in self.points.values():
             if p.mat in (material["door"], material["poi"]):
                 # round to catch any tiny floating-point drift from moves/splits
                 coord_map[(round(p.y), round(p.x))] = p
@@ -926,60 +876,6 @@ class Network:
             if key in coord_map:
                 resolved.append(coord_map[key])
             else:
-                # safety fallback (should never trigger after the first greedy step)
-                # print(f"WARNING: terminal at {key} not found in network — recreating")
                 resolved.append(self.determine_point(key[0], key[1]))
         
         self.terminals = resolved
-
-
-# =============================================================================
-# example() - run it for testing
-# =============================================================================
-def example():
-    net = Network()
-
-    # make points
-    a = net.add_point(0, 0)
-    b = net.add_point(0, 5)
-    c = net.add_point(5, 5)
-    d = net.add_point(5, 0)
-    e = net.add_point(4, 2)
-
-    # Create edges
-    net.add_path(a, b)
-    net.add_path(b, c)
-    net.add_path(c, d)
-    net.add_path(d, a)
-
-    # Diagonal cross
-    net.add_path(a, c)
-    net.add_path(b, d)
-
-    # Connect center
-    net.add_path(e, a)
-    net.add_path(e, b)
-    net.add_path(e, c)
-    net.add_path(e, d)
-    net.plot_network(True)
-
-    # split intersection
-    ac = net.get_path(a, c)
-    bd = net.get_path(b, d)
-    f = net.split_on_intersection(ac, bd)
-    net.plot_network(True)
-
-    # move a point
-    net.move_point(f, 1, 3)    
-    net.plot_network(True)
-
-    # remove a point
-    net.remove_point(d) 
-    net.plot_network(True)
-
-    # remove a path
-    net.remove_path(net.get_path(a, b)) 
-    net.plot_network(True)
-
-if __name__ == "__main__":
-    example()
