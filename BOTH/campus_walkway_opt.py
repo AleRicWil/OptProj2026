@@ -439,11 +439,11 @@ def simulated_annealing_network(initial_net: Network, campus_map, initial_temp=1
             best_obj = current_obj
             # best_net.plot_network(campus_map)
             # crank up the heat when things are going well
-            temperature *= 1.3
+            # temperature *= 1.3
 
-            print(f"Iter {iter:5d} | Temp {temperature:6.2f} | "
-                f"Best {best_obj:8.1f} | Curr {current_obj:8.1f} | Paved {current_paved:6.1f} | "
-                f"Travel {current_travel:6.1f}")
+            # print(f"Iter {iter:5d} | Temp {temperature:6.2f} | "
+            #     f"Best {best_obj:8.1f} | Curr {current_obj:8.1f} | Paved {current_paved:6.1f} | "
+            #     f"Travel {current_travel:6.1f}")
 
         history.append(best_obj)
 
@@ -453,48 +453,64 @@ def simulated_annealing_network(initial_net: Network, campus_map, initial_temp=1
             break
         iter += 1
 
-
-    print(f"\nSA finished after {iter} iterations.")
-    print(f"Final objective: {best_obj:.1f}")
-    print(f"Worse moves accepted: {worse_accepted}  ← this is the SA magic that finds good hubs!")
-
     return best_net, best_obj, history
 
 
 # ----------------------------------------------------------------------------- 
 # RUN EVERYTHING (updated for the new pruning-focused SA)
 # ----------------------------------------------------------------------------- 
-print('\nRunning simulated annealing on the dense initial network (pruning mode)...')
 
-final_net, final_obj, convergence = simulated_annealing_network(
-    initial_net, 
-    campus_map,
-    initial_temp=1700.0,
-    cooling_rate=0.9997,
-    target_travel_factor=1.00,      # allow up to 20% travel-time increase
-    penalty_factor=180,            # tune this to trade off paving vs. travel
-    kmax=6                          # max number of nearby points a node could possibly connect to
-)
+def run(penalty_factor):
+    print('\nRunning simulated annealing on the dense initial network (pruning mode)...')
 
-final_paved = final_net.total_paved_length()
-final_travel = final_net.total_travel_time()
+    final_net, final_obj, convergence = simulated_annealing_network(
+        initial_net, 
+        campus_map,
+        initial_temp=1700.0,
+        cooling_rate=0.9997,
+        target_travel_factor=1.10,      # allow up to 10% travel-time increase
+        penalty_factor=penalty_factor,  # tune this to trade off paving vs. travel
+        kmax=6                          # max number of nearby points a node could possibly connect to
+    )
 
-print("\n=== FINAL RESULTS (Engineering Optimization HW-style report) ===")
-print(f"Initial (dense) paved length : {initial_paved:.1f} | travel time: {initial_travel:.1f}")
-print(f"SA-optimized paved length   : {final_paved:.1f} | travel time: {final_travel:.1f}")
-print(f"Paving material saved       : {initial_paved - final_paved:.1f} units "
-      f"({((initial_paved - final_paved)/initial_paved)*100:.1f}%)")
-if initial_travel > 0:
-    print(f"Travel-time change         : {((final_travel - initial_travel)/initial_travel)*100:.1f}%")
+    final_paved = final_net.total_paved_length()
+    final_travel = final_net.total_travel_time()
 
-# Final static plots (uses your existing plotter)
-final_net.plot_network(campus_map)
+    print("\n=== FINAL RESULTS ===")
+    print(f"Penalty Factor: {penalty_factor}")
+    print(f"Initial (dense) paved length : {initial_paved:.1f} | travel time: {initial_travel:.1f}")
+    print(f"SA-optimized paved length   : {final_paved:.1f} | travel time: {final_travel:.1f}")
+    print(f"Paving material saved       : {initial_paved - final_paved:.1f} units "
+        f"({((initial_paved - final_paved)/initial_paved)*100:.1f}%)")
+    if initial_travel > 0:
+        print(f"Travel-time change         : {((final_travel - initial_travel)/initial_travel)*100:.1f}%")
 
-plt.figure(figsize=(10, 6))
-plt.plot(convergence, 'darkgreen', linewidth=2.5)
-plt.title('Simulated Annealing Convergence\n'
-          'Objective = Paved Length + Travel-Time Penalty')
-plt.xlabel('Iteration')
-plt.ylabel('Objective Value')
-plt.grid(True, alpha=0.6)
+    return final_paved, final_travel
+
+
+pavements = []
+travels = []
+for i in range (30):
+    fp, ft = run(i*30)
+    pavements.append(fp)
+    travels.append(ft)
+
+plt.figure(figsize=(8,6))
+plt.scatter(pavements, travels)
+plt.xlabel("Pavement Cost")
+plt.ylabel("Travel Times")
+plt.title("Pavement vs Travel")
+plt.grid(True)
 plt.show()
+
+# # Final static plots (uses your existing plotter)
+# final_net.plot_network(campus_map)
+
+# plt.figure(figsize=(10, 6))
+# plt.plot(convergence, 'darkgreen', linewidth=2.5)
+# plt.title('Simulated Annealing Convergence\n'
+#           'Objective = Paved Length + Travel-Time Penalty')
+# plt.xlabel('Iteration')
+# plt.ylabel('Objective Value')
+# plt.grid(True, alpha=0.6)
+# plt.show()
