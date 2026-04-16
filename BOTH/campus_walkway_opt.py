@@ -166,7 +166,7 @@ def simulated_annealing_network(initial_net: Network, campus_map, max_iter=8000,
     target_travel = initial_travel * target_travel_factor   # we allow a modest degradation
     current_paved = current_net.total_paved_length()
     current_travel = initial_travel
-    current_obj = current_paved + penalty_factor * max(0.0, current_travel - target_travel)
+    current_obj = current_paved + penalty_factor * target_travel
     best_obj = current_obj
 
     temperature = initial_temp
@@ -338,7 +338,7 @@ def simulated_annealing_network(initial_net: Network, campus_map, max_iter=8000,
         if new_travel > 1e8:
             new_obj = 1e12
         else:
-            new_obj = new_paved + penalty_factor * max(0.0, new_travel - target_travel)
+            new_obj = new_paved + penalty_factor * new_travel
 
         # Metropolis acceptance criterion (the heart of SA — see book §8.6)
         delta = new_obj - current_obj
@@ -385,7 +385,7 @@ def simulated_annealing_network(initial_net: Network, campus_map, max_iter=8000,
 
         # Cool the temperature (geometric schedule)
         temperature *= cooling_rate
-        if temperature < 10.0:
+        if temperature < 5.0:
             break
         i += 1
 
@@ -402,9 +402,9 @@ def run(i, penalty_factor):
     final_net, final_obj, convergence = simulated_annealing_network(
         initial_net, 
         campus_map,
-        max_iter=24000,
-        initial_temp=1500.0,
-        cooling_rate=0.9998,
+        max_iter=50000,
+        initial_temp=2000.0,
+        cooling_rate=0.9995,
         target_travel_factor=1.10,      # allow up to 10% travel-time increase
         penalty_factor=penalty_factor,  # tune this to trade off paving vs. travel
         kmax=6                          # max number of nearby points a node could possibly connect to
@@ -427,13 +427,14 @@ def run(i, penalty_factor):
 if __name__ == "__main__":
     # pavements = []
     # travels = []
-    # for i in range (15):
-    #     _, _, _, fp, ft = run(i, i*0.01)
+    # from tqdm import tqdm
+    # for i in tqdm(range(30)):
+    #     _, _, _, fp, ft = run(i, i*0.06)
     #     pavements.append(fp)
     #     travels.append(ft)
 
     # print(f"pavements: {pavements}")
-    # print(f"pavements: {travels}")
+    # print(f"travels: {travels}")
     # plt.figure(figsize=(8,6))
     # plt.scatter(pavements, travels)
     # plt.xlabel("Pavement Cost")
@@ -442,7 +443,7 @@ if __name__ == "__main__":
     # plt.grid(True)
     # plt.show()
 
-    final_net, final_obj, convergence, final_paved, final_travel = run(0, 0.36)
+    final_net, final_obj, convergence, final_paved, final_travel = run(0, 1.0)
 
     # Final static plots (uses your existing plotter)
     final_net.plot_network(campus_map)
