@@ -53,51 +53,6 @@ print(f"There are {len(base_net.unique_pairs)} unique destination pairs.")
 # STEP 3: Build INITIAL solution (greedy OR fully connected OR random — controlled by flag)
 # -----------------------------------------------------------------------------
 def build_dense_initial(net: Network, terminals: list[Point], door_points: list[Point], campus_map) -> Network:
-    """Builds a DENSE paved walkway network by attempting FULL connections between:
-       • Every destination (terminal/POI) to every other destination,
-       • Every destination to every door, and
-       • Every door to every other door.
-
-    TEACHING GOAL (Engineering Design Optimization, Ch. 8.4 "Greedy Algorithms" 
-    and Ch. 8.6 "Simulated Annealing"):
-      In our campus walkway project we are solving a classic discrete network 
-      design problem. The paved paths are the DECISION VARIABLES.
-      
-      A simple greedy MST (the function you already have) gives a minimal 
-      spanning tree — useful for a cheap starting point. 
-      
-      This dense builder creates a much richer initial graph: it adds 
-      almost every feasible paved edge that a pedestrian might actually use. 
-      This is exactly what professional Steiner-tree / road-network optimizers 
-      do before pruning with SA or other metaheuristics.
-      
-      Why is this helpful for learning?
-      1. It lets you instantly see (in the step_vis interactive stepper) how 
-         shortest-path travel times change when many routing options exist.
-      2. It gives Simulated Annealing a realistic "over-connected" starting 
-         design to improve upon — exactly the kind of initial solution you 
-         would hand an optimizer in a real campus-planning project.
-      3. It demonstrates constraint handling: we only add a paved edge if it 
-         does NOT cross a building (using the exact same line_crosses_building 
-         test you already use in the greedy builder).
-      
-      REAL-WORLD CAMPUS LOGIC (the key teaching insight):
-      - Doors inside the SAME building are allowed to connect directly with 
-        paved paths even if the straight line crosses interior cells 
-        (pedestrians can walk inside the building without needing exterior paving).
-      - All other connections (different buildings or POI-to-anything) must 
-        stay strictly outside buildings.
-      
-      This function is self-contained and can be dropped straight into 
-      step_vis.py right after your existing build_greedy_initial function.
-    """
-
-    # ------------------------------------------------------------------
-    # 1. Build the same-building lookup table (exactly as in campus_walkway_opt.py)
-    #    This is the realistic campus rule that makes door-to-door connections
-    #    inside one building allowed.
-    # ------------------------------------------------------------------
-    from collections import defaultdict
     door_to_building: dict[tuple[int, int], str] = {}
     
     # Grab the exact coordinate scaling that campus() used when it built the map
@@ -126,47 +81,20 @@ def build_dense_initial(net: Network, terminals: list[Point], door_points: list[
         return not line_crosses_building(p1.y, p1.x, p2.y, p2.x, campus_map)
 
     # ------------------------------------------------------------------
-    # 3. Count existing paved paths so we can report how many we added
-    # ------------------------------------------------------------------
     paved_before = len([p for p in net.paths if p.mat == material["paved"]])
-    print("Building DENSE pathway network (full connections between "
-          "destinations + doors)...")
-
-    # ------------------------------------------------------------------
-    # 4. Door ↔ Door connections
-    # ------------------------------------------------------------------
-    print("   • Connecting every door to every other door...")
     import itertools
     for d1, d2 in itertools.combinations(door_points, 2):
         if allowed_to_connect(d1, d2):
             net.add_path(d1, d2, material["paved"])
 
-    # ------------------------------------------------------------------
-    # 5. Destination ↔ Destination connections
-    # ------------------------------------------------------------------
-    print("   • Connecting every destination to every other destination...")
     for t1, t2 in itertools.combinations(terminals, 2):
         if allowed_to_connect(t1, t2):
             net.add_path(t1, t2, material["paved"])
 
-    # ------------------------------------------------------------------
-    # 6. Destination ↔ Door connections
-    # ------------------------------------------------------------------
-    print("   • Connecting every destination to every door...")
     for dest in terminals:
         for door in door_points:
             if allowed_to_connect(dest, door):
                 net.add_path(dest, door, material["paved"])
-
-    # ------------------------------------------------------------------
-    # 7. Final report (great for learning how many edges your network now has)
-    # ------------------------------------------------------------------
-    paved_after = len([p for p in net.paths if p.mat == material["paved"]])
-    added = paved_after - paved_before
-    print(f"Dense pathway builder finished!")
-    print(f"   Added {added} new paved paths.")
-    print(f"   Total paved paths now: {paved_after} (this is your rich initial graph)")
-    print(f"   (Terminals remain fully connected via exterior paved + interior paths)")
 
     return net
 
@@ -174,9 +102,6 @@ initial_net = base_net.copy()   # fresh copy so we don't mutate the building-blo
 initial_net = build_dense_initial(initial_net, base_net.terminals, base_net.door_points, campus_map)
 # Resolve terminals to the live Point objects in this network (safety after any copies)
 initial_net.resolve_terminals()
-
-print(f"Dense initial network built with "
-      f"{len([p for p in initial_net.paths if p.mat == material['paved']])} paved paths.")
 
 
 # Compute metrics for reporting
@@ -248,11 +173,11 @@ def simulated_annealing_network(initial_net: Network, campus_map, max_iter=8000,
     history = [best_obj]
     worse_accepted = 0
 
-    print("\n=== Starting Simulated Annealing ===")
-    print(f"Initial paved length : {current_paved:.1f} units")
-    print(f"Initial total travel : {current_travel:.1f} units")
-    print(f"Target travel time   : {target_travel:.1f} ({target_travel_factor-1:.0%} increase)")
-    print(f"Initial temperature  : {temperature:.0f} | Objective : {current_obj:.1f}")
+    # print("\n=== Starting Simulated Annealing ===")
+    # print(f"Initial paved length : {current_paved:.1f} units")
+    # print(f"Initial total travel : {current_travel:.1f} units")
+    # print(f"Target travel time   : {target_travel:.1f} ({target_travel_factor-1:.0%} increase)")
+    # print(f"Initial temperature  : {temperature:.0f} | Objective : {current_obj:.1f}")
     i = 0
 
     while True:
@@ -448,7 +373,8 @@ def simulated_annealing_network(initial_net: Network, campus_map, max_iter=8000,
             best_obj = current_obj
             # best_net.plot_network(campus_map)
             # crank up the heat when things are going well
-            # temperature *= 1.3
+            if temperature < initial_temp:
+                temperature *= 1.3
 
         if i % 100 == 0:
             print(f"Iter {i:5d} | Temp {temperature:6.2f} | "
@@ -472,15 +398,13 @@ def simulated_annealing_network(initial_net: Network, campus_map, max_iter=8000,
 # RUN EVERYTHING (updated for the new pruning-focused SA)
 # ----------------------------------------------------------------------------- 
 
-def run(penalty_factor):
-    print('\nRunning simulated annealing on the dense initial network (pruning mode)...')
-
+def run(i, penalty_factor):
     final_net, final_obj, convergence = simulated_annealing_network(
         initial_net, 
         campus_map,
-        max_iter=8000,
-        initial_temp=1700.0,
-        cooling_rate=0.9997,
+        max_iter=24000,
+        initial_temp=1500.0,
+        cooling_rate=0.9998,
         target_travel_factor=1.10,      # allow up to 10% travel-time increase
         penalty_factor=penalty_factor,  # tune this to trade off paving vs. travel
         kmax=6                          # max number of nearby points a node could possibly connect to
@@ -489,7 +413,7 @@ def run(penalty_factor):
     final_paved = final_net.total_paved_length()
     final_travel = final_net.total_travel_time()
 
-    print("\n=== FINAL RESULTS ===")
+    print(f"\n=== ROUND {i} ===")
     print(f"Penalty Factor: {penalty_factor}")
     print(f"Initial (dense) paved length : {initial_paved:.1f} | travel time: {initial_travel:.1f}")
     print(f"SA-optimized paved length   : {final_paved:.1f} | travel time: {final_travel:.1f}")
@@ -498,32 +422,36 @@ def run(penalty_factor):
     if initial_travel > 0:
         print(f"Travel-time change         : {((final_travel - initial_travel)/initial_travel)*100:.1f}%")
 
-    return final_paved, final_travel
+    return final_net, final_obj, convergence, final_paved, final_travel
 
+if __name__ == "__main__":
+    # pavements = []
+    # travels = []
+    # for i in range (15):
+    #     _, _, _, fp, ft = run(i, i*0.01)
+    #     pavements.append(fp)
+    #     travels.append(ft)
 
-pavements = []
-travels = []
-for i in range (20):
-    fp, ft = run(i*100)
-    pavements.append(fp)
-    travels.append(ft)
+    # print(f"pavements: {pavements}")
+    # print(f"pavements: {travels}")
+    # plt.figure(figsize=(8,6))
+    # plt.scatter(pavements, travels)
+    # plt.xlabel("Pavement Cost")
+    # plt.ylabel("Travel Times")
+    # plt.title("Pavement vs Travel")
+    # plt.grid(True)
+    # plt.show()
 
-plt.figure(figsize=(8,6))
-plt.scatter(pavements, travels)
-plt.xlabel("Pavement Cost")
-plt.ylabel("Travel Times")
-plt.title("Pavement vs Travel")
-plt.grid(True)
-plt.show()
+    final_net, final_obj, convergence, final_paved, final_travel = run(0, 0.36)
 
-# # Final static plots (uses your existing plotter)
-# final_net.plot_network(campus_map)
+    # Final static plots (uses your existing plotter)
+    final_net.plot_network(campus_map)
 
-# plt.figure(figsize=(10, 6))
-# plt.plot(convergence, 'darkgreen', linewidth=2.5)
-# plt.title('Simulated Annealing Convergence\n'
-#           'Objective = Paved Length + Travel-Time Penalty')
-# plt.xlabel('Iteration')
-# plt.ylabel('Objective Value')
-# plt.grid(True, alpha=0.6)
-# plt.show()
+    plt.figure(figsize=(10, 6))
+    plt.plot(convergence, 'darkgreen', linewidth=2.5)
+    plt.title('Simulated Annealing Convergence\n'
+              'Objective = Paved Length + Travel-Time Penalty')
+    plt.xlabel('Iteration')
+    plt.ylabel('Objective Value')
+    plt.grid(True, alpha=0.6)
+    plt.show()

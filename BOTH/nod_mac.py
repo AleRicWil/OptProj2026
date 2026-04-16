@@ -537,13 +537,13 @@ class Network:
                         color='gray', linestyle='--', linewidth=1.8, alpha=0.65)
 
         # Plot doors (small circles) and destinations (gold stars)
-        door_xs = [p.x for p in self.points if p.mat == material['door']]
-        door_ys = [p.y for p in self.points if p.mat == material['door']]
+        door_xs = [p.x for p in self.points.values() if p.mat == material['door']]
+        door_ys = [p.y for p in self.points.values() if p.mat == material['door']]
         ax.scatter(door_xs, door_ys, color=color_map[material['door']], s=45, zorder=5,
                 edgecolors='black', linewidth=0.6)
         
-        node_xs = [p.x for p in self.points if p.mat == material['node']]
-        node_ys = [p.y for p in self.points if p.mat == material['node']]
+        node_xs = [p.x for p in self.points.values() if p.mat == material['node']]
+        node_ys = [p.y for p in self.points.values() if p.mat == material['node']]
         ax.scatter(node_xs, node_ys, color=color_map[material['node']], s=45, zorder=5,
                 edgecolors='black', linewidth=0.6)
 
@@ -747,9 +747,7 @@ class Network:
         return total_travel
 
     def get_shortest_route(self, start: Point, goal: Point):
-        """Returns the list of points in the shortest path and the total Euclidean travel time.
-        Uses the exact same hybrid graph (paved + interior) that total_travel_time() uses
-        in your main optimizer. This is what SA is minimizing!"""
+        """Returns the list of points in the shortest path and the total Euclidean travel time"""
         if start is goal:
             return [start], 0.0
 
@@ -789,11 +787,7 @@ class Network:
         return path, dist[goal_idx]
 
     def is_valid_space(self, campus_map) -> bool:
-        """NEW HELPER: Returns True only if NO paved path crosses a building.
-        Uses the exact same raster sampling as loc_gen.line_crosses_building
-        (pure Euclidean line sampling). This is the single source of truth
-        for feasibility—much safer than the old vector intersection with
-        blocked wall paths (which only checked boundaries)."""
+        """returns True only if NO paved path crosses a building"""
         for path in self.paths:
             if path.mat == material["paved"]:
                 if line_crosses_building(path.p1.y, path.p1.x,
